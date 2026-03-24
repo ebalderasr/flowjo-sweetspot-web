@@ -35,7 +35,8 @@
             <p><code>UpperEnvelope = Median_pos + k * rSD_pos</code></p>
             <p><strong>Empty-gate threshold</strong> tells the app when a neighbor gate should be treated as biologically empty instead of problematic missing data.</p>
             <p><strong>Global SI / Ws thresholds</strong> are fallback values. In <code>rule_based_per_dye</code>, the dye table below can override them.</p>
-            <p><strong>Dye configuration</strong> lets you edit the target fluorescence channel and the per-dye selection logic.</p>
+            <p><strong>Dye configuration</strong> lets you edit the target fluorescence channel, the color used in the plots, and the per-dye selection logic.</p>
+            <p>By default, GFP is treated as <code>informational_only</code>: it still contributes spill and can still be invaded by other dyes, but it is not treated as a titration to optimize.</p>
           </div>
           <div class="field-grid">
             <label class="field wide">
@@ -140,12 +141,11 @@
                 <button class="info-button" type="button" data-help-target="selection-help" aria-label="Explain selection criteria plot">?</button>
               </div>
               <div id="selection-help" class="help-panel hidden">
-                <p>Each dye gets its own decision panel.</p>
-                <p><strong>Y axis:</strong> Stain Index, so higher means stronger separation from ST.</p>
-                <p><strong>X axis:</strong> Ws on a log scale, so moving left means less spill / intrusion.</p>
-                <p><strong>Dashed horizontal line:</strong> the minimum SI considered sufficient for that dye.</p>
+                <p>Each dye gets its own decision-score panel.</p>
+                <p><strong>Y axis:</strong> Decision score, so higher means a better compromise between enough SI and low spill.</p>
+                <p><strong>X axis:</strong> concentration.</p>
                 <p><strong>Black outlined point:</strong> the selected condition.</p>
-                <p>This figure is meant to show why the highest-intensity point is not always chosen. A brighter condition can be rejected if it carries much larger spill cost.</p>
+                <p>The score stops rewarding extra brightness strongly once SI is already sufficient, so a brighter point can lose if its spill penalty is much larger.</p>
               </div>
               <div id="selection-plot" class="plot"></div>
             </div>

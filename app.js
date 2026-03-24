@@ -9,7 +9,7 @@ const DEFAULT_SELECTION_RULES = {
   "Bodipy": { mode: "min_ws_after_si", min_acceptable_si: 30, min_si_fraction_of_max: 0.15, ws_equivalence_fraction: 0.05 },
   "CellRox Deep Red": { mode: "min_ws_after_si", min_acceptable_si: 40, min_si_fraction_of_max: 0.15, ws_equivalence_fraction: 0.05 },
   "TMRM": { mode: "min_ws_after_si", min_acceptable_si: 7, min_si_fraction_of_max: 0.15, ws_equivalence_fraction: 0.05 },
-  "GFP (proteina recombinante)": { mode: "max_si", min_acceptable_si: 0, min_si_fraction_of_max: 0, ws_equivalence_fraction: 0.05 },
+  "GFP (proteina recombinante)": { mode: "informational_only", min_acceptable_si: 0, min_si_fraction_of_max: 0, ws_equivalence_fraction: 0.05 },
 };
 
 const DEFAULT_DYE_COLORS = {
@@ -65,6 +65,7 @@ function renderConfigTable() {
         <select data-dye="${escapeHtmlAttr(dye)}" data-key="mode">
           <option value="min_ws_after_si" ${rule.mode === "min_ws_after_si" ? "selected" : ""}>min_ws_after_si</option>
           <option value="max_si" ${rule.mode === "max_si" ? "selected" : ""}>max_si</option>
+          <option value="informational_only" ${rule.mode === "informational_only" ? "selected" : ""}>informational_only</option>
         </select>
       </td>
       <td><input data-dye="${escapeHtmlAttr(dye)}" data-key="min_acceptable_si" type="number" step="0.1" value="${rule.min_acceptable_si}" /></td>
@@ -375,6 +376,22 @@ function selectBestConditions(results, options) {
   const grouped = groupBy(results, "Dye");
   const out = [];
   Object.entries(grouped).forEach(([dye, subset]) => {
+    const initialRule = resolveRule(dye, options);
+    if (initialRule.mode === "informational_only") {
+      subset.forEach((row) => {
+        row.Selection_Mode = "informational_only";
+        row.Selection_Status = "INFORMATIONAL_ONLY";
+        row.Selection_SI_Threshold = NaN;
+        row.Selection_Ws_Limit = NaN;
+        row.Selection_Ws_Tolerance = initialRule.ws_equivalence_fraction;
+        row.Decision_Score = NaN;
+        row.Decision_SI_Component = NaN;
+        row.Decision_Ws_Component = NaN;
+        row.Decision_Safety_Component = row.Clip_Risk ? 0 : row.Near_Clip ? 0.75 : 1;
+      });
+      return;
+    }
+
     let candidatePool = subset.slice();
     let selectionStatus = "SAFE_SELECTION";
 
@@ -433,8 +450,31 @@ function selectBestConditions(results, options) {
       }
     }
 
+    const selectionMode = options.analysisMode === "quality_score" ? "quality_score" : resolveRule(dye, options).mode;
+    const scoreReferencePool = candidatePool.slice();
+    const referenceWs = scoreReferencePool.length ? Math.min(...scoreReferencePool.map((row) => row.Weighted_Severity)) : NaN;
+
+    subset.forEach((row) => {
+      const safety = row.Clip_Risk ? 0 : row.Near_Clip ? 0.75 : 1;
+      const siComponent = Number.isFinite(siThreshold) && siThreshold > 0
+        ? Math.min(Math.max(row.Stain_Index / siThreshold, 0), 1)
+        : Number.isFinite(row.Stain_Index) ? 1 : 0;
+      const wsComponent = Number.isFinite(referenceWs) && referenceWs > 0
+        ? Math.min(referenceWs / Math.max(row.Weighted_Severity, referenceWs), 1)
+        : row.Weighted_Severity === 0 ? 1 : 0;
+      row.Decision_SI_Component = siComponent;
+      row.Decision_Ws_Component = wsComponent;
+      row.Decision_Safety_Component = safety;
+      row.Decision_Score = 100 * safety * ((0.45 * siComponent) + (0.55 * wsComponent));
+      row.Selection_Mode = selectionMode;
+      row.Selection_SI_Threshold = siThreshold;
+      row.Selection_Ws_Limit = wsLimit;
+      row.Selection_Ws_Tolerance = resolveRule(dye, options).ws_equivalence_fraction;
+      row.Selection_Status = selectionStatus;
+    });
+
     const best = { ...candidatePool[0] };
-    best.Selection_Mode = options.analysisMode === "quality_score" ? "quality_score" : resolveRule(dye, options).mode;
+    best.Selection_Mode = selectionMode;
     best.Selection_SI_Threshold = siThreshold;
     best.Selection_Ws_Limit = wsLimit;
     best.Selection_Ws_Tolerance = resolveRule(dye, options).ws_equivalence_fraction;
@@ -499,7 +539,7 @@ function renderResults(result, fileName) {
   document.getElementById("run-summary").textContent = `${fileName} | ${result.results.length} rows analyzed | frequency scale ${result.freqDivisor === 100 ? "0-100" : "0-1"}`;
   renderBestCards(result.best);
   renderTable("best-table", result.best, [
-    "Dye", "Clone", "Concentracion", "Target_Channel", "Stain_Index", "Weighted_Severity", "Quality_Score",
+    "Dye", "Clone", "Concentracion", "Target_Channel", "Decision_Score", "Stain_Index", "Weighted_Severity",
     "UpperEnvelope_Target", "Near_Clip", "Clip_Risk", "Selection_Mode", "Selection_Status",
   ]);
   renderTable("ws-table", result.wsBreakdown.slice(0, 24), [
@@ -526,6 +566,7 @@ function renderBestCards(rows) {
       <dl>
         <dt>Clone</dt><dd>${escapeHtml(row.Clone || "Main")}</dd>
         <dt>Mode</dt><dd>${escapeHtml(row.Selection_Mode)}</dd>
+        <dt>Decision score</dt><dd>${formatNumber(row.Decision_Score)}</dd>
         <dt>SI</dt><dd>${formatNumber(row.Stain_Index)}</dd>
         <dt>Ws</dt><dd>${formatNumber(row.Weighted_Severity)}</dd>
         <dt>QS</dt><dd>${formatNumber(row.Quality_Score)}</dd>
@@ -621,7 +662,8 @@ function renderSummaryPlot(results) {
 
 function renderSelectionPlot(results, bestRows) {
   const seriesStyles = buildSeriesStyles(results, state.latestResult?.options || {});
-  const grouped = groupBy(results, "Dye");
+  const filtered = results.filter((row) => row.Selection_Mode !== "informational_only");
+  const grouped = groupBy(filtered, "Dye");
   const traces = [];
   const dyes = Object.keys(grouped);
   const annotations = [];
@@ -638,11 +680,11 @@ function renderSelectionPlot(results, bestRows) {
       const style = seriesStyles[seriesKey] || { color: DYE_COLORS[0], symbol: CLONE_SYMBOLS[0] };
       traces.push({
         type: "scatter",
-        mode: "markers+text",
+        mode: "lines+markers+text",
         name: `${dye} | ${clone}`,
         legendgroup: `${dye}|${clone}`,
-        x: subset.map((row) => Math.max(row.Weighted_Severity, 1e-6)),
-        y: subset.map((row) => row.Stain_Index),
+        x: subset.map((row) => String(row.Concentracion)),
+        y: subset.map((row) => row.Decision_Score),
         text: subset.map((row) => String(row.Concentracion)),
         textposition: "top center",
         xaxis: `x${axisIndex}`,
@@ -657,28 +699,23 @@ function renderSelectionPlot(results, bestRows) {
           },
           opacity: subset.map((row) => row.Clip_Risk ? 0.62 : row.Near_Clip ? 0.84 : 1),
         },
-        hovertemplate: "Series: %{name}<br>Conc: %{text}<br>SI: %{y:.3f}<br>Ws: %{x:.3f}<extra></extra>",
+        line: { color: style.color, width: 2.2 },
+        customdata: subset.map((row) => [row.Stain_Index, row.Weighted_Severity, row.Decision_SI_Component, row.Decision_Ws_Component, row.Decision_Safety_Component]),
+        hovertemplate:
+          "Series: %{name}<br>" +
+          "Conc: %{x}<br>" +
+          "Decision score: %{y:.2f}<br>" +
+          "SI: %{customdata[0]:.3f}<br>" +
+          "Ws: %{customdata[1]:.3f}<br>" +
+          "SI component: %{customdata[2]:.2f}<br>" +
+          "Ws component: %{customdata[3]:.2f}<br>" +
+          "Safety factor: %{customdata[4]:.2f}<extra></extra>",
         showlegend: index === 0,
       });
     });
 
-    if (best && Number.isFinite(best.Selection_SI_Threshold)) {
-      traces.push({
-        type: "scatter",
-        mode: "lines",
-        name: `${dye} SI threshold`,
-        x: rows.map((row) => Math.max(row.Weighted_Severity, 1e-6)),
-        y: rows.map(() => best.Selection_SI_Threshold),
-        xaxis: `x${axisIndex}`,
-        yaxis: `y${axisIndex}`,
-        line: { color: "rgba(60,60,60,0.5)", dash: "dash", width: 1.4 },
-        hoverinfo: "skip",
-        showlegend: false,
-      });
-    }
-
     const chosenText = best
-      ? `Chosen: ${best.Concentracion}<br>SI ${formatNumber(best.Stain_Index)} | Ws ${formatNumber(best.Weighted_Severity)}`
+      ? `Chosen: ${best.Concentracion}<br>Score ${formatNumber(best.Decision_Score)}<br>SI ${formatNumber(best.Stain_Index)} | Ws ${formatNumber(best.Weighted_Severity)}`
       : "No selection";
     annotations.push({
       xref: `x${axisIndex} domain`,
@@ -693,7 +730,7 @@ function renderSelectionPlot(results, bestRows) {
       bordercolor: "rgba(68,51,34,0.16)",
       borderwidth: 1,
       font: { size: 11, color: "#615749" },
-      text: `<b>${dye}</b><br>SI ↑ better | Ws ↓ better<br>${chosenText}`,
+      text: `<b>${dye}</b><br>Decision score ↑ better<br>Score weights sufficient SI and low Ws<br>${chosenText}`,
     });
   });
 
@@ -704,7 +741,7 @@ function renderSelectionPlot(results, bestRows) {
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "rgba(255,255,255,0.78)",
     annotations,
-    ...buildSelectionAxes(dyes.length),
+    ...buildSelectionAxes(dyes.length, true),
     legend: { orientation: "h", y: 1.1 },
   }, { responsive: true, displaylogo: false });
 }
@@ -882,24 +919,28 @@ function inferCloneLabel(sampleName) {
   return "Main";
 }
 
-function buildSelectionAxes(count) {
+function buildSelectionAxes(count, scoreMode = false) {
   const layout = {};
   for (let index = 1; index <= count; index += 1) {
     layout[`xaxis${index === 1 ? "" : index}`] = {
-      title: index === count ? "Ws (lower is better)" : "",
-      type: "log",
+      title: index === count ? (scoreMode ? "Concentration" : "Ws (lower is better)") : "",
+      type: scoreMode ? "category" : "log",
     };
     layout[`yaxis${index === 1 ? "" : index}`] = {
-      title: "SI",
+      title: scoreMode ? "Decision score" : "SI",
     };
   }
   return layout;
 }
 
 function interpretRow(row) {
+  if (row.Selection_Mode === "informational_only") return "Observed for panel context only; not treated as a titration target.";
   if (row.Clip_Risk) return "Rejected if safer alternatives exist because the target envelope reaches the detector ceiling.";
   if (row.Near_Clip) return "Usable, but close to the detector limit.";
   if (row.Selection_Mode === "max_si") return "Selected by strongest separation after safety filtering.";
+  if (Number.isFinite(row.Decision_Score) && Number.isFinite(row.Decision_Ws_Component) && row.Decision_Ws_Component < 0.5) {
+    return `High signal alone was not enough; the decision score dropped because spill cost stayed high (${formatNumber(row.Weighted_Severity)}).`;
+  }
   if (Number.isFinite(row.Selection_SI_Threshold) && Number.isFinite(row.Selection_Ws_Limit)) {
     return `Selected because it stayed above SI ${formatNumber(row.Selection_SI_Threshold)} and kept Ws within the best low-spill range (${formatNumber(row.Selection_Ws_Limit)}).`;
   }
