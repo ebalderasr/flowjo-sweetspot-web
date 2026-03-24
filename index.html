@@ -90,6 +90,7 @@
               <thead>
                 <tr>
                   <th>Dye</th>
+                  <th>Color</th>
                   <th>Target channel</th>
                   <th>Selection mode</th>
                   <th>Absolute SI threshold</th>
@@ -129,7 +130,7 @@
                 <p><strong>Ws</strong> is the weighted spill / spread penalty into the other channels. Lower is better.</p>
                 <p><strong>Quality Score</strong> is a descriptive combined score, but the final decision does not rely only on it.</p>
                 <p><strong>Upper envelope</strong> shows detector pressure using <code>Median + k * rSD</code>. Staying lower is safer.</p>
-                <p>Color is assigned by dye and symbol by clone, and that same mapping is reused across figures.</p>
+                <p>Color is assigned by dye and symbol by clone, and that same mapping is reused across figures. You can edit dye colors in the configuration table.</p>
               </div>
               <div id="summary-plot" class="plot plot-tall"></div>
             </div>
@@ -139,10 +140,12 @@
                 <button class="info-button" type="button" data-help-target="selection-help" aria-label="Explain selection criteria plot">?</button>
               </div>
               <div id="selection-help" class="help-panel hidden">
-                <p>Each point is one tested condition.</p>
+                <p>Each dye gets its own decision panel.</p>
                 <p><strong>Y axis:</strong> Stain Index, so higher means stronger separation from ST.</p>
                 <p><strong>X axis:</strong> Ws on a log scale, so moving left means less spill / intrusion.</p>
-                <p>The recommended region is high enough in SI, left enough in Ws, and outside clipping risk.</p>
+                <p><strong>Dashed horizontal line:</strong> the minimum SI considered sufficient for that dye.</p>
+                <p><strong>Black outlined point:</strong> the selected condition.</p>
+                <p>This figure is meant to show why the highest-intensity point is not always chosen. A brighter condition can be rejected if it carries much larger spill cost.</p>
               </div>
               <div id="selection-plot" class="plot"></div>
             </div>

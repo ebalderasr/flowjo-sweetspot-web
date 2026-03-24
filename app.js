@@ -12,6 +12,13 @@ const DEFAULT_SELECTION_RULES = {
   "GFP (proteina recombinante)": { mode: "max_si", min_acceptable_si: 0, min_si_fraction_of_max: 0, ws_equivalence_fraction: 0.05 },
 };
 
+const DEFAULT_DYE_COLORS = {
+  "GFP (proteina recombinante)": "#2f7d4d",
+  TMRM: "#244c5a",
+  Bodipy: "#9c2f12",
+  "CellRox Deep Red": "#8a3b89",
+};
+
 const SUMMARY_TOKENS = ["mean", "sd", "std", "stdev", "average", "avg", "cv", "median", "geomean", "summary", "resumen"];
 const BASE_COLUMN_ALIASES = {
   Sample: ["Sample", "Sample:"],
@@ -52,6 +59,7 @@ function renderConfigTable() {
     const row = document.createElement("tr");
     row.innerHTML = `
       <td>${escapeHtml(dye)}</td>
+      <td><input data-dye="${escapeHtmlAttr(dye)}" data-key="color" type="color" value="${escapeHtmlAttr(DEFAULT_DYE_COLORS[dye] || DYE_COLORS[0])}" /></td>
       <td><input data-dye="${escapeHtmlAttr(dye)}" data-key="channel" value="${escapeHtmlAttr(channel)}" /></td>
       <td>
         <select data-dye="${escapeHtmlAttr(dye)}" data-key="mode">
@@ -79,7 +87,7 @@ async function runAnalysis() {
     const rows = await fileToRows(file);
     const options = collectOptions();
     const result = analyzeFlowjoSweetspot(rows, options);
-    state.latestResult = result;
+    state.latestResult = { ...result, options };
     renderResults(result, file.name);
     setStatus(`Analysis complete. Processed ${result.results.length} useful sample rows.`);
   } catch (error) {
@@ -93,6 +101,7 @@ function collectOptions() {
   const analysisMode = document.getElementById("analysis-mode").value;
   const channelsMap = {};
   const selectionRules = {};
+  const dyeColors = {};
   document.querySelectorAll("#config-table tbody tr").forEach((row) => {
     const inputs = [...row.querySelectorAll("input, select")];
     const dye = inputs[0].dataset.dye;
@@ -100,6 +109,7 @@ function collectOptions() {
     inputs.forEach((input) => {
       buffer[input.dataset.key] = input.value;
     });
+    dyeColors[dye] = buffer.color;
     channelsMap[dye] = buffer.channel;
     selectionRules[dye] = {
       mode: buffer.mode,
@@ -120,6 +130,7 @@ function collectOptions() {
     wsEquivalenceFraction: toFiniteNumber(document.getElementById("ws-equivalence-fraction").value, 0.05),
     analysisMode,
     channelsMap,
+    dyeColors,
     selectionRules,
   };
 }
@@ -527,7 +538,7 @@ function renderBestCards(rows) {
 }
 
 function renderSummaryPlot(results) {
-  const seriesStyles = buildSeriesStyles(results);
+  const seriesStyles = buildSeriesStyles(results, state.latestResult?.options || {});
   const grouped = groupByComposite(results, ["Dye", "Clone"]);
   const traces = [];
   Object.entries(grouped).forEach(([key, rows]) => {
@@ -594,6 +605,12 @@ function renderSummaryPlot(results) {
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "rgba(255,255,255,0.78)",
     legend: { orientation: "h", y: 1.15 },
+    annotations: [
+      { text: "Stain Index ↑ higher is better", x: 0, xref: "paper", y: 1.02, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
+      { text: "Ws ↓ lower is better", x: 0, xref: "paper", y: 0.76, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
+      { text: "Quality Score ↑ descriptive only", x: 0, xref: "paper", y: 0.50, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
+      { text: "Upper envelope ↓ safer when lower", x: 0, xref: "paper", y: 0.24, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
+    ],
     yaxis: { title: "SI" },
     yaxis2: { title: "Ws", type: "log" },
     yaxis3: { title: "QS" },
@@ -603,42 +620,91 @@ function renderSummaryPlot(results) {
 }
 
 function renderSelectionPlot(results, bestRows) {
-  const seriesStyles = buildSeriesStyles(results);
-  const grouped = groupByComposite(results, ["Dye", "Clone"]);
+  const seriesStyles = buildSeriesStyles(results, state.latestResult?.options || {});
+  const grouped = groupBy(results, "Dye");
   const traces = [];
-  Object.entries(grouped).forEach(([key, rows]) => {
-    const [dye, clone] = key.split("|||");
-    const style = seriesStyles[key] || { color: DYE_COLORS[0], symbol: CLONE_SYMBOLS[0] };
-    const best = bestRows.find((row) => row.Dye === dye && row.Clone === clone);
-    traces.push({
-      type: "scatter",
-      mode: "markers+text",
-      name: `${dye} | ${clone}`,
-      legendgroup: clone,
-      x: rows.map((row) => Math.max(row.Weighted_Severity, 1e-6)),
-      y: rows.map((row) => row.Stain_Index),
-      text: rows.map((row) => String(row.Concentracion)),
-      textposition: "top center",
-      marker: {
-        size: rows.map((row) => best && String(row.Concentracion) === String(best.Concentracion) ? 18 : 11),
-        color: style.color,
-        symbol: rows.map(() => style.symbol),
-        line: {
-          color: rows.map((row) => best && String(row.Concentracion) === String(best.Concentracion) ? "#111111" : "rgba(0,0,0,0.3)"),
-          width: rows.map((row) => best && String(row.Concentracion) === String(best.Concentracion) ? 3 : 1),
+  const dyes = Object.keys(grouped);
+  const annotations = [];
+
+  dyes.forEach((dye, index) => {
+    const axisIndex = index + 1;
+    const rows = grouped[dye];
+    const best = bestRows.find((row) => row.Dye === dye);
+    const clones = [...new Set(rows.map((row) => row.Clone || "Main"))];
+
+    clones.forEach((clone) => {
+      const subset = rows.filter((row) => (row.Clone || "Main") === clone);
+      const seriesKey = `${dye}|||${clone}`;
+      const style = seriesStyles[seriesKey] || { color: DYE_COLORS[0], symbol: CLONE_SYMBOLS[0] };
+      traces.push({
+        type: "scatter",
+        mode: "markers+text",
+        name: `${dye} | ${clone}`,
+        legendgroup: `${dye}|${clone}`,
+        x: subset.map((row) => Math.max(row.Weighted_Severity, 1e-6)),
+        y: subset.map((row) => row.Stain_Index),
+        text: subset.map((row) => String(row.Concentracion)),
+        textposition: "top center",
+        xaxis: `x${axisIndex}`,
+        yaxis: `y${axisIndex}`,
+        marker: {
+          size: subset.map((row) => best && String(row.Concentracion) === String(best.Concentracion) && (row.Clone || "Main") === (best.Clone || "Main") ? 18 : 11),
+          color: style.color,
+          symbol: style.symbol,
+          line: {
+            color: subset.map((row) => best && String(row.Concentracion) === String(best.Concentracion) && (row.Clone || "Main") === (best.Clone || "Main") ? "#111111" : "rgba(0,0,0,0.3)"),
+            width: subset.map((row) => best && String(row.Concentracion) === String(best.Concentracion) && (row.Clone || "Main") === (best.Clone || "Main") ? 3 : 1),
+          },
+          opacity: subset.map((row) => row.Clip_Risk ? 0.62 : row.Near_Clip ? 0.84 : 1),
         },
-        opacity: rows.map((row) => row.Clip_Risk ? 0.65 : row.Near_Clip ? 0.82 : 1),
-      },
-      hovertemplate: "Series: %{name}<br>Conc: %{text}<br>SI: %{y:.3f}<br>Ws: %{x:.3f}<extra></extra>",
+        hovertemplate: "Series: %{name}<br>Conc: %{text}<br>SI: %{y:.3f}<br>Ws: %{x:.3f}<extra></extra>",
+        showlegend: index === 0,
+      });
+    });
+
+    if (best && Number.isFinite(best.Selection_SI_Threshold)) {
+      traces.push({
+        type: "scatter",
+        mode: "lines",
+        name: `${dye} SI threshold`,
+        x: rows.map((row) => Math.max(row.Weighted_Severity, 1e-6)),
+        y: rows.map(() => best.Selection_SI_Threshold),
+        xaxis: `x${axisIndex}`,
+        yaxis: `y${axisIndex}`,
+        line: { color: "rgba(60,60,60,0.5)", dash: "dash", width: 1.4 },
+        hoverinfo: "skip",
+        showlegend: false,
+      });
+    }
+
+    const chosenText = best
+      ? `Chosen: ${best.Concentracion}<br>SI ${formatNumber(best.Stain_Index)} | Ws ${formatNumber(best.Weighted_Severity)}`
+      : "No selection";
+    annotations.push({
+      xref: `x${axisIndex} domain`,
+      yref: `y${axisIndex} domain`,
+      x: 0.02,
+      y: 0.96,
+      xanchor: "left",
+      yanchor: "top",
+      align: "left",
+      showarrow: false,
+      bgcolor: "rgba(255,255,255,0.82)",
+      bordercolor: "rgba(68,51,34,0.16)",
+      borderwidth: 1,
+      font: { size: 11, color: "#615749" },
+      text: `<b>${dye}</b><br>SI ↑ better | Ws ↓ better<br>${chosenText}`,
     });
   });
 
   Plotly.newPlot("selection-plot", traces, {
+    height: Math.max(380 * dyes.length, 420),
+    grid: { rows: dyes.length, columns: 1, pattern: "independent" },
     margin: { t: 30, r: 16, b: 48, l: 60 },
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "rgba(255,255,255,0.78)",
-    xaxis: { title: "Ws (lower is better)", type: "log" },
-    yaxis: { title: "SI (higher is better)" },
+    annotations,
+    ...buildSelectionAxes(dyes.length),
     legend: { orientation: "h", y: 1.1 },
   }, { responsive: true, displaylogo: false });
 }
@@ -773,14 +839,14 @@ function groupByComposite(rows, keys) {
   }, {});
 }
 
-function buildSeriesStyles(rows) {
+function buildSeriesStyles(rows, options = {}) {
   const dyes = [...new Set(rows.map((row) => row.Dye || "Unknown"))];
   const clones = [...new Set(rows.map((row) => row.Clone || "Main"))];
   const dyeColors = {};
   const cloneSymbols = {};
 
   dyes.forEach((dye, index) => {
-    dyeColors[dye] = DYE_COLORS[index % DYE_COLORS.length];
+    dyeColors[dye] = options.dyeColors?.[dye] || DEFAULT_DYE_COLORS[dye] || DYE_COLORS[index % DYE_COLORS.length];
   });
   clones.forEach((clone, index) => {
     cloneSymbols[clone] = CLONE_SYMBOLS[index % CLONE_SYMBOLS.length];
@@ -806,10 +872,6 @@ function inferCloneLabel(sampleName) {
   const patterns = [
     /(?:^|[_\s-])(clone[_\s-]?[A-Za-z0-9]+)$/i,
     /(?:^|[_\s-])(clona[_\s-]?[A-Za-z0-9]+)$/i,
-    /(?:^|[_\s-])(high|low)$/i,
-    /(?:^|[_\s-])(wt|ko)$/i,
-    /(?:^|[_\s-])(c\d+|c)$/i,
-    /(?:^|[_\s-])([A-Z])$/i,
   ];
   for (const pattern of patterns) {
     const match = stem.match(pattern);
@@ -820,10 +882,27 @@ function inferCloneLabel(sampleName) {
   return "Main";
 }
 
+function buildSelectionAxes(count) {
+  const layout = {};
+  for (let index = 1; index <= count; index += 1) {
+    layout[`xaxis${index === 1 ? "" : index}`] = {
+      title: index === count ? "Ws (lower is better)" : "",
+      type: "log",
+    };
+    layout[`yaxis${index === 1 ? "" : index}`] = {
+      title: "SI",
+    };
+  }
+  return layout;
+}
+
 function interpretRow(row) {
   if (row.Clip_Risk) return "Rejected if safer alternatives exist because the target envelope reaches the detector ceiling.";
   if (row.Near_Clip) return "Usable, but close to the detector limit.";
   if (row.Selection_Mode === "max_si") return "Selected by strongest separation after safety filtering.";
+  if (Number.isFinite(row.Selection_SI_Threshold) && Number.isFinite(row.Selection_Ws_Limit)) {
+    return `Selected because it stayed above SI ${formatNumber(row.Selection_SI_Threshold)} and kept Ws within the best low-spill range (${formatNumber(row.Selection_Ws_Limit)}).`;
+  }
   return "Selected after requiring sufficient separation and then minimizing spill cost.";
 }
 
