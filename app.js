@@ -180,6 +180,7 @@ function analyzeFlowjoSweetspot(rows, options) {
     const rsdPos = row[targetCols.rsd_pos];
     const mfiSt = stSummary[targetCols.med_neg];
     const rsdSt = stSummary[targetCols.rsd_neg];
+    const freqSignal = Number.isFinite(row[targetCols.freq_pos]) ? row[targetCols.freq_pos] / freqDivisor : NaN;
 
     const stainIndex = Number.isFinite(mfiPos) && Number.isFinite(mfiSt) && Number.isFinite(rsdSt) && rsdSt > 0
       ? (mfiPos - mfiSt) / (2 * rsdSt)
@@ -224,18 +225,20 @@ function analyzeFlowjoSweetspot(rows, options) {
         Concentracion: row.Concentracion ?? "",
         Target_Channel: channel,
         Neighbor_Channel: otherChannel,
-        Freq_raw: row[neighborCols.freq_pos],
-        Freq_fraction: Number.isFinite(row[neighborCols.freq_pos]) ? row[neighborCols.freq_pos] / freqDivisor : NaN,
-        Median_intruder: row[neighborCols.med_pos],
-        RobustSD_intruder: row[neighborCols.rsd_pos],
-        Median_ST_neighbor: stSummary[neighborCols.med_neg],
-        RobustSD_ST_neighbor: stSummary[neighborCols.rsd_neg],
-        Contribution_Ws: contribResult.contribution,
+        Freq_Invasion: contribResult.contribution,
+        Apparent_SI: contribResult.apparentSI,
         Status: contribResult.status,
       });
     });
 
-    const score = Number.isFinite(stainIndex) ? stainIndex / (1 + wsTotal) : NaN;
+    // SI factor: ramps from 0 to 1 as SI goes from 0 to minAcceptableSi; capped at 1 above threshold.
+    // Penalizes concentrations with insufficient signal, but doesn't further reward extra brightness.
+    const siFactor = (options.minAcceptableSi > 0 && Number.isFinite(stainIndex))
+      ? Math.min(Math.max(stainIndex / options.minAcceptableSi, 0), 1)
+      : (Number.isFinite(stainIndex) ? 1 : 0);
+    // Score: fraction of cells positive in target channel, penalized by fraction invading other channels,
+    // corrected by SI factor so signal quality still matters but doesn't dominate.
+    const score = Number.isFinite(freqSignal) ? (freqSignal / (1 + wsTotal)) * siFactor : NaN;
     results.push({
       Sample: row.Sample ?? "",
       Dye: dye,
@@ -243,6 +246,7 @@ function analyzeFlowjoSweetspot(rows, options) {
       Concentracion: row.Concentracion ?? "",
       Target_Channel: channel,
       Stain_Index: stainIndex,
+      Freq_Signal: freqSignal,
       Invasion_Total: wsTotal,
       Score: score,
       Median_Target: mfiPos,
@@ -397,24 +401,26 @@ function resolveRule(dye, options) {
   return { mode: rule.mode || "score_based" };
 }
 
-// Invasion contribution: fraction_of_cells × apparent_SI_in_neighbor_channel
-// apparent SI = (median_intruder − median_unstained) / (2 × rSD_unstained)
-// Same units as the primary Stain Index, so Score = SI / (1 + Invasion) is directly interpretable.
+// Invasion contribution:
+//   contribution = freqFraction — fraction of cells that fall in the neighbor channel's positive gate.
+//   apparentSI   = (med_intruder − med_ST_neighbor) / (2 × rSD_ST_neighbor) — diagnostic: how strong
+//                  the signal looks in that neighbor channel (same units as the primary Stain Index).
+// The contribution drives the Score; apparentSI is stored for inspection only.
 function calcIntrusionContribution({ freqRaw, medIntruder, rsdIntruder, medStNeighbor, rsdStNeighbor, freqDivisor, emptyGateThresholdFraction }) {
-  if (!Number.isFinite(freqRaw)) return { contribution: NaN, status: "missing_freq" };
+  if (!Number.isFinite(freqRaw)) return { contribution: NaN, apparentSI: NaN, status: "missing_freq" };
   const freqFraction = freqRaw / freqDivisor;
-  if (freqFraction <= 0) return { contribution: 0, status: "empty_gate" };
+  if (freqFraction <= 0) return { contribution: 0, apparentSI: 0, status: "empty_gate" };
   if (freqFraction <= emptyGateThresholdFraction && !Number.isFinite(medIntruder)) {
-    return { contribution: 0, status: "near_empty_gate" };
+    return { contribution: 0, apparentSI: 0, status: "near_empty_gate" };
   }
-  if (![medIntruder, medStNeighbor, rsdStNeighbor].every(Number.isFinite)) {
-    return { contribution: NaN, status: "missing_metrics_nontrivial_freq" };
+  if (!Number.isFinite(freqFraction)) {
+    return { contribution: NaN, apparentSI: NaN, status: "missing_metrics_nontrivial_freq" };
   }
-  if (rsdStNeighbor <= 0) {
-    return { contribution: NaN, status: "invalid_st_baseline" };
+  let apparentSI = NaN;
+  if ([medIntruder, medStNeighbor, rsdStNeighbor].every(Number.isFinite) && rsdStNeighbor > 0) {
+    apparentSI = (medIntruder - medStNeighbor) / (2 * rsdStNeighbor);
   }
-  const apparentSI = (medIntruder - medStNeighbor) / (2 * rsdStNeighbor);
-  return { contribution: freqFraction * Math.max(0, apparentSI), status: "ok" };
+  return { contribution: freqFraction, apparentSI, status: "ok" };
 }
 
 function inferFreqDivisor(rows, columns) {
@@ -444,11 +450,11 @@ function renderResults(result, fileName) {
   document.getElementById("run-summary").textContent = `${fileName} | ${result.results.length} rows analyzed | frequency scale ${result.freqDivisor === 100 ? "0-100" : "0-1"}`;
   renderBestCards(result.best);
   renderTable("best-table", result.best, [
-    "Dye", "Clone", "Concentracion", "Target_Channel", "Score", "Stain_Index", "Invasion_Total",
+    "Dye", "Clone", "Concentracion", "Target_Channel", "Score", "Freq_Signal", "Invasion_Total", "Stain_Index",
     "UpperEnvelope_Target", "Near_Clip", "Clip_Risk", "Selection_Status",
   ]);
   renderTable("ws-table", result.wsBreakdown.slice(0, 24), [
-    "Dye", "Clone", "Concentracion", "Neighbor_Channel", "Freq_fraction", "Contribution_Ws", "Status",
+    "Dye", "Clone", "Concentracion", "Neighbor_Channel", "Freq_Invasion", "Apparent_SI", "Status",
   ]);
   renderSummaryPlot(result.results);
   renderSelectionPlot(result.results, result.best);
@@ -471,8 +477,9 @@ function renderBestCards(rows) {
       <dl>
         <dt>Clone</dt><dd>${escapeHtml(row.Clone || "Main")}</dd>
         <dt>Score</dt><dd>${formatNumber(row.Score)}</dd>
+        <dt>% positivas</dt><dd>${formatPercent(row.Freq_Signal)}</dd>
+        <dt>% invasión total</dt><dd>${formatPercent(row.Invasion_Total)}</dd>
         <dt>SI</dt><dd>${formatNumber(row.Stain_Index)}</dd>
-        <dt>Invasion (Ws)</dt><dd>${formatNumber(row.Invasion_Total)}</dd>
         <dt>Upper env.</dt><dd>${formatNumber(row.UpperEnvelope_Target)}</dd>
         <dt>Interpretation</dt><dd>${interpretRow(row)}</dd>
       </dl>
@@ -537,12 +544,12 @@ function renderSummaryPlot(results) {
     plot_bgcolor: "rgba(255,255,255,0.78)",
     legend: { orientation: "h", y: 1.15 },
     annotations: [
-      { text: "Stain Index ↑ higher is better", x: 0, xref: "paper", y: 1.02, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
-      { text: "Invasion (Ws) ↓ lower is better", x: 0, xref: "paper", y: 0.67, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
-      { text: "Score = SI / (1 + Invasion) ↑ el pico indica la concentración óptima", x: 0, xref: "paper", y: 0.32, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
+      { text: "Stain Index ↑ referencia de señal sobre background", x: 0, xref: "paper", y: 1.02, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
+      { text: "Invasión total ↓ fracción de células que caen en canales vecinos", x: 0, xref: "paper", y: 0.67, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
+      { text: "Score ↑ el pico es la concentración óptima", x: 0, xref: "paper", y: 0.32, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
     ],
     yaxis: { title: "SI" },
-    yaxis2: { title: "Invasion (Ws)", type: "log" },
+    yaxis2: { title: "Invasión total (fracción)" },
     yaxis3: { title: "Score" },
     xaxis3: { title: "Concentration" },
   }, { responsive: true, displaylogo: false });
@@ -588,19 +595,20 @@ function renderSelectionPlot(results, bestRows) {
           opacity: subset.map((row) => row.Clip_Risk ? 0.62 : row.Near_Clip ? 0.84 : 1),
         },
         line: { color: style.color, width: 2.2 },
-        customdata: subset.map((row) => [row.Stain_Index, row.Invasion_Total]),
+        customdata: subset.map((row) => [row.Freq_Signal, row.Invasion_Total, row.Stain_Index]),
         hovertemplate:
           "Series: %{name}<br>" +
           "Conc: %{x}<br>" +
           "Score: %{y:.3f}<br>" +
-          "SI: %{customdata[0]:.3f}<br>" +
-          "Invasion (Ws): %{customdata[1]:.3f}<extra></extra>",
+          "% positivas: %{customdata[0]:.1%}<br>" +
+          "% invasión total: %{customdata[1]:.1%}<br>" +
+          "SI: %{customdata[2]:.2f}<extra></extra>",
         showlegend: index === 0,
       });
     });
 
     const chosenText = best
-      ? `Elegida: ${best.Concentracion}<br>Score ${formatNumber(best.Score)}<br>SI ${formatNumber(best.Stain_Index)} | Invasion ${formatNumber(best.Invasion_Total)}`
+      ? `Elegida: ${best.Concentracion}<br>Score ${formatNumber(best.Score)}<br>${formatPercent(best.Freq_Signal)} pos | ${formatPercent(best.Invasion_Total)} invasión | SI ${formatNumber(best.Stain_Index)}`
       : "No selection";
     annotations.push({
       xref: `x${axisIndex} domain`,
@@ -823,9 +831,14 @@ function interpretRow(row) {
   if (row.Clip_Risk) return "Riesgo de saturación: el envelope alcanza el límite del detector.";
   if (row.Near_Clip) return "Cerca del límite del detector; considerar concentración menor.";
   if (row.Selection_Status === "BELOW_SI_THRESHOLD") {
-    return `Ninguna concentración superó el SI mínimo; se seleccionó la de mayor Score (SI=${formatNumber(row.Stain_Index)}, Ws=${formatNumber(row.Invasion_Total)}).`;
+    return `Ninguna concentración superó el SI mínimo (SI = ${formatNumber(row.Stain_Index)}); se seleccionó la de mayor Score de todos modos.`;
   }
-  return `Score = SI / (1 + Invasion) = ${formatNumber(row.Stain_Index)} / (1 + ${formatNumber(row.Invasion_Total)}) = ${formatNumber(row.Score)}.`;
+  return `${formatPercent(row.Freq_Signal)} células positivas, ${formatPercent(row.Invasion_Total)} de invasión total → Score ${formatNumber(row.Score)}.`;
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return "";
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 function setStatus(message) {
