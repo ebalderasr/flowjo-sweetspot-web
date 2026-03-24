@@ -6,18 +6,13 @@ const DEFAULT_CHANNELS = {
 };
 
 const DEFAULT_SELECTION_RULES = {
-  "Bodipy": { mode: "min_ws_after_si" },
-  "CellRox Deep Red": { mode: "min_ws_after_si" },
-  "TMRM": { mode: "min_ws_after_si" },
-  "GFP (proteina recombinante)": { mode: "informational_only", min_acceptable_si: 0, min_si_fraction_of_max: 0, ws_equivalence_fraction: 0.05 },
+  "GFP (proteina recombinante)": { mode: "informational_only" },
 };
 
 const DEFAULT_ENGINE_OPTIONS = {
   clippingK: 2,
   safeFraction: 0.9,
   emptyGateThresholdPercent: 0.05,
-  minSiFractionOfMax: 0.15,
-  wsEquivalenceFraction: 0.05,
 };
 
 const DEFAULT_DYE_COLORS = {
@@ -116,8 +111,6 @@ function collectOptions() {
     clippingK: DEFAULT_ENGINE_OPTIONS.clippingK,
     safeFraction: DEFAULT_ENGINE_OPTIONS.safeFraction,
     emptyGateThresholdPercent: DEFAULT_ENGINE_OPTIONS.emptyGateThresholdPercent,
-    minSiFractionOfMax: DEFAULT_ENGINE_OPTIONS.minSiFractionOfMax,
-    wsEquivalenceFraction: DEFAULT_ENGINE_OPTIONS.wsEquivalenceFraction,
     channelsMap,
     dyeColors,
   };
@@ -191,9 +184,6 @@ function analyzeFlowjoSweetspot(rows, options) {
     const stainIndex = Number.isFinite(mfiPos) && Number.isFinite(mfiSt) && Number.isFinite(rsdSt) && rsdSt > 0
       ? (mfiPos - mfiSt) / (2 * rsdSt)
       : NaN;
-    const siSpread = Number.isFinite(rsdPos) && Number.isFinite(rsdSt) && rsdSt > 0
-      ? rsdPos / (2 * rsdSt)
-      : NaN;
 
     let upperEnvelope = NaN;
     let clipRisk = false;
@@ -245,7 +235,7 @@ function analyzeFlowjoSweetspot(rows, options) {
       });
     });
 
-    const qualityScore = Number.isFinite(stainIndex) ? stainIndex / Math.log10(wsTotal + 10) : NaN;
+    const score = Number.isFinite(stainIndex) ? stainIndex / (1 + wsTotal) : NaN;
     results.push({
       Sample: row.Sample ?? "",
       Dye: dye,
@@ -253,9 +243,8 @@ function analyzeFlowjoSweetspot(rows, options) {
       Concentracion: row.Concentracion ?? "",
       Target_Channel: channel,
       Stain_Index: stainIndex,
-      SI_Spread: siSpread,
-      Weighted_Severity: wsTotal,
-      Quality_Score: qualityScore,
+      Invasion_Total: wsTotal,
+      Score: score,
       Median_Target: mfiPos,
       RobustSD_Target: rsdPos,
       UpperEnvelope_Target: upperEnvelope,
@@ -363,88 +352,39 @@ function selectBestConditions(results, options) {
   const grouped = groupBy(results, "Dye");
   const out = [];
   Object.entries(grouped).forEach(([dye, subset]) => {
-    const initialRule = resolveRule(dye, options);
-    if (initialRule.mode === "informational_only") {
+    if (resolveRule(dye, options).mode === "informational_only") {
       subset.forEach((row) => {
-        row.Selection_Mode = "informational_only";
         row.Selection_Status = "INFORMATIONAL_ONLY";
-        row.Selection_SI_Threshold = NaN;
-        row.Selection_Ws_Limit = NaN;
-        row.Selection_Ws_Tolerance = initialRule.ws_equivalence_fraction;
         row.Decision_Score = NaN;
-        row.Decision_SI_Component = NaN;
-        row.Decision_Ws_Component = NaN;
-        row.Decision_Safety_Component = row.Clip_Risk ? 0 : row.Near_Clip ? 0.75 : 1;
       });
       return;
     }
 
-    let candidatePool = subset.slice();
-    let selectionStatus = "SAFE_SELECTION";
+    // Step 1: safety — exclude clip-risk rows when alternatives exist
+    let pool = subset.slice();
+    const noClip = pool.filter((row) => !row.Clip_Risk);
+    if (noClip.length) pool = noClip;
+    const noNearClip = pool.filter((row) => !row.Near_Clip);
+    if (noNearClip.length) pool = noNearClip;
 
-    const safe = candidatePool.filter((row) => !row.Clip_Risk);
-    if (safe.length) {
-      const safer = safe.filter((row) => !row.Near_Clip);
-      candidatePool = safer.length ? safer : safe;
-    } else {
-      selectionStatus = "ONLY_RISKY_OPTIONS";
-    }
+    // Step 2: SI floor — require minimum detectable signal
+    const aboveSI = pool.filter((row) => Number.isFinite(row.Stain_Index) && row.Stain_Index >= options.minAcceptableSi);
+    const selectionStatus = aboveSI.length ? "OK" : "BELOW_SI_THRESHOLD";
+    if (aboveSI.length) pool = aboveSI;
 
-    const minMissing = Math.min(...candidatePool.map((row) => row.Missing_Nontrivial_Ws_Channels));
-    candidatePool = candidatePool.filter((row) => row.Missing_Nontrivial_Ws_Channels === minMissing);
+    // Step 3: prefer rows with fewer missing Ws channels
+    const minMissing = Math.min(...pool.map((row) => row.Missing_Nontrivial_Ws_Channels));
+    pool = pool.filter((row) => row.Missing_Nontrivial_Ws_Channels === minMissing);
 
-    const rule = resolveRule(dye, options);
-    let siThreshold = NaN;
-    let wsLimit = NaN;
-
-    const finiteSi = candidatePool.map((row) => row.Stain_Index).filter(Number.isFinite);
-    if (finiteSi.length) {
-      siThreshold = Math.max(rule.min_acceptable_si, Math.max(...finiteSi) * rule.min_si_fraction_of_max);
-      const sufficient = candidatePool.filter((row) => Number.isFinite(row.Stain_Index) && row.Stain_Index >= siThreshold);
-      if (sufficient.length) {
-        candidatePool = sufficient;
-        selectionStatus += "|SUFFICIENT_SI";
-      } else {
-        selectionStatus += "|NO_SI_THRESHOLD_PASS";
-      }
-    }
-    const minWs = Math.min(...candidatePool.map((row) => row.Weighted_Severity));
-    wsLimit = minWs * (1 + rule.ws_equivalence_fraction);
-    candidatePool = candidatePool.filter((row) => row.Weighted_Severity <= wsLimit);
-    candidatePool.sort((a, b) =>
-      compareNumbers(b.Stain_Index, a.Stain_Index) ||
-      compareNumbers(b.Quality_Score, a.Quality_Score) ||
-      compareNumbers(a.Weighted_Severity, b.Weighted_Severity)
-    );
-
-    const selectionMode = resolveRule(dye, options).mode;
-    const scoreReferencePool = candidatePool.slice();
-    const referenceWs = scoreReferencePool.length ? Math.min(...scoreReferencePool.map((row) => row.Weighted_Severity)) : NaN;
+    // Step 4: pick the concentration with the highest Score = SI / (1 + Invasion)
+    pool.sort((a, b) => compareNumbers(b.Score, a.Score));
 
     subset.forEach((row) => {
-      const safety = row.Clip_Risk ? 0 : row.Near_Clip ? 0.75 : 1;
-      const siComponent = Number.isFinite(siThreshold) && siThreshold > 0
-        ? Math.min(Math.max(row.Stain_Index / siThreshold, 0), 1)
-        : Number.isFinite(row.Stain_Index) ? 1 : 0;
-      const wsComponent = Number.isFinite(referenceWs) && referenceWs > 0
-        ? Math.min(referenceWs / Math.max(row.Weighted_Severity, referenceWs), 1)
-        : row.Weighted_Severity === 0 ? 1 : 0;
-      row.Decision_SI_Component = siComponent;
-      row.Decision_Ws_Component = wsComponent;
-      row.Decision_Safety_Component = safety;
-      row.Decision_Score = 100 * safety * ((0.45 * siComponent) + (0.55 * wsComponent));
-      row.Selection_Mode = selectionMode;
-      row.Selection_SI_Threshold = siThreshold;
-      row.Selection_Ws_Limit = wsLimit;
-      row.Selection_Ws_Tolerance = resolveRule(dye, options).ws_equivalence_fraction;
+      row.Decision_Score = row.Score;
       row.Selection_Status = selectionStatus;
     });
 
-    const best = { ...candidatePool[0] };
-    best.Selection_Mode = selectionMode;
-    best.Selection_SI_Threshold = siThreshold;
-    best.Selection_Ws_Limit = wsLimit;
-    best.Selection_Ws_Tolerance = resolveRule(dye, options).ws_equivalence_fraction;
+    const best = { ...pool[0] };
     best.Selection_Status = selectionStatus;
     out.push(best);
   });
@@ -453,30 +393,28 @@ function selectBestConditions(results, options) {
 }
 
 function resolveRule(dye, options) {
-  const baseRule = DEFAULT_SELECTION_RULES[dye] || {};
-  return {
-    mode: baseRule.mode || "min_ws_after_si",
-    min_acceptable_si: baseRule.mode === "informational_only" ? 0 : options.minAcceptableSi,
-    min_si_fraction_of_max: baseRule.mode === "informational_only" ? 0 : options.minSiFractionOfMax,
-    ws_equivalence_fraction: baseRule.mode === "informational_only" ? 0.05 : options.wsEquivalenceFraction,
-  };
+  const rule = DEFAULT_SELECTION_RULES[dye] || {};
+  return { mode: rule.mode || "score_based" };
 }
 
+// Invasion contribution: fraction_of_cells × apparent_SI_in_neighbor_channel
+// apparent SI = (median_intruder − median_unstained) / (2 × rSD_unstained)
+// Same units as the primary Stain Index, so Score = SI / (1 + Invasion) is directly interpretable.
 function calcIntrusionContribution({ freqRaw, medIntruder, rsdIntruder, medStNeighbor, rsdStNeighbor, freqDivisor, emptyGateThresholdFraction }) {
   if (!Number.isFinite(freqRaw)) return { contribution: NaN, status: "missing_freq" };
   const freqFraction = freqRaw / freqDivisor;
   if (freqFraction <= 0) return { contribution: 0, status: "empty_gate" };
-  if (freqFraction <= emptyGateThresholdFraction && (!Number.isFinite(medIntruder) || !Number.isFinite(rsdIntruder))) {
+  if (freqFraction <= emptyGateThresholdFraction && !Number.isFinite(medIntruder)) {
     return { contribution: 0, status: "near_empty_gate" };
   }
-  if (![medIntruder, rsdIntruder, medStNeighbor, rsdStNeighbor].every(Number.isFinite)) {
+  if (![medIntruder, medStNeighbor, rsdStNeighbor].every(Number.isFinite)) {
     return { contribution: NaN, status: "missing_metrics_nontrivial_freq" };
   }
-  if (medStNeighbor <= 0 || rsdStNeighbor <= 0) {
+  if (rsdStNeighbor <= 0) {
     return { contribution: NaN, status: "invalid_st_baseline" };
   }
-  const contribution = freqFraction * (medIntruder / medStNeighbor) * (rsdIntruder / rsdStNeighbor);
-  return { contribution, status: "ok" };
+  const apparentSI = (medIntruder - medStNeighbor) / (2 * rsdStNeighbor);
+  return { contribution: freqFraction * Math.max(0, apparentSI), status: "ok" };
 }
 
 function inferFreqDivisor(rows, columns) {
@@ -506,8 +444,8 @@ function renderResults(result, fileName) {
   document.getElementById("run-summary").textContent = `${fileName} | ${result.results.length} rows analyzed | frequency scale ${result.freqDivisor === 100 ? "0-100" : "0-1"}`;
   renderBestCards(result.best);
   renderTable("best-table", result.best, [
-    "Dye", "Clone", "Concentracion", "Target_Channel", "Decision_Score", "Stain_Index", "Weighted_Severity",
-    "UpperEnvelope_Target", "Near_Clip", "Clip_Risk", "Selection_Mode", "Selection_Status",
+    "Dye", "Clone", "Concentracion", "Target_Channel", "Score", "Stain_Index", "Invasion_Total",
+    "UpperEnvelope_Target", "Near_Clip", "Clip_Risk", "Selection_Status",
   ]);
   renderTable("ws-table", result.wsBreakdown.slice(0, 24), [
     "Dye", "Clone", "Concentracion", "Neighbor_Channel", "Freq_fraction", "Contribution_Ws", "Status",
@@ -532,11 +470,9 @@ function renderBestCards(rows) {
       <p>Recommended concentration: <strong>${escapeHtml(String(row.Concentracion))}</strong></p>
       <dl>
         <dt>Clone</dt><dd>${escapeHtml(row.Clone || "Main")}</dd>
-        <dt>Mode</dt><dd>${escapeHtml(row.Selection_Mode)}</dd>
-        <dt>Decision score</dt><dd>${formatNumber(row.Decision_Score)}</dd>
+        <dt>Score</dt><dd>${formatNumber(row.Score)}</dd>
         <dt>SI</dt><dd>${formatNumber(row.Stain_Index)}</dd>
-        <dt>Ws</dt><dd>${formatNumber(row.Weighted_Severity)}</dd>
-        <dt>QS</dt><dd>${formatNumber(row.Quality_Score)}</dd>
+        <dt>Invasion (Ws)</dt><dd>${formatNumber(row.Invasion_Total)}</dd>
         <dt>Upper env.</dt><dd>${formatNumber(row.UpperEnvelope_Target)}</dd>
         <dt>Interpretation</dt><dd>${interpretRow(row)}</dd>
       </dl>
@@ -570,7 +506,7 @@ function renderSummaryPlot(results) {
       mode: "lines+markers",
       name: `${dye} | ${clone}`,
       x: ordered.map((row) => String(row.Concentracion)),
-      y: ordered.map((row) => Math.max(row.Weighted_Severity, 1e-6)),
+      y: ordered.map((row) => Math.max(row.Invasion_Total, 1e-6)),
       xaxis: "x2",
       yaxis: "y2",
       showlegend: false,
@@ -583,22 +519,9 @@ function renderSummaryPlot(results) {
       mode: "lines+markers",
       name: `${dye} | ${clone}`,
       x: ordered.map((row) => String(row.Concentracion)),
-      y: ordered.map((row) => row.Quality_Score),
+      y: ordered.map((row) => row.Score),
       xaxis: "x3",
       yaxis: "y3",
-      showlegend: false,
-      legendgroup: clone,
-      marker: { color: style.color, symbol: style.symbol, size: 10 },
-      line: { color: style.color, width: 2.2 },
-    });
-    traces.push({
-      type: "scatter",
-      mode: "lines+markers",
-      name: `${dye} | ${clone}`,
-      x: ordered.map((row) => String(row.Concentracion)),
-      y: ordered.map((row) => row.UpperEnvelope_Target),
-      xaxis: "x4",
-      yaxis: "y4",
       showlegend: false,
       legendgroup: clone,
       marker: { color: style.color, symbol: style.symbol, size: 10 },
@@ -607,29 +530,27 @@ function renderSummaryPlot(results) {
   });
 
   Plotly.newPlot("summary-plot", traces, {
-    height: 980,
-    grid: { rows: 4, columns: 1, pattern: "independent" },
+    height: 720,
+    grid: { rows: 3, columns: 1, pattern: "independent" },
     margin: { t: 30, r: 16, b: 40, l: 60 },
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "rgba(255,255,255,0.78)",
     legend: { orientation: "h", y: 1.15 },
     annotations: [
       { text: "Stain Index ↑ higher is better", x: 0, xref: "paper", y: 1.02, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
-      { text: "Ws ↓ lower is better", x: 0, xref: "paper", y: 0.76, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
-      { text: "Quality Score ↑ descriptive only", x: 0, xref: "paper", y: 0.50, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
-      { text: "Upper envelope ↓ safer when lower", x: 0, xref: "paper", y: 0.24, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
+      { text: "Invasion (Ws) ↓ lower is better", x: 0, xref: "paper", y: 0.67, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
+      { text: "Score = SI / (1 + Invasion) ↑ el pico indica la concentración óptima", x: 0, xref: "paper", y: 0.32, yref: "paper", xanchor: "left", showarrow: false, font: { size: 12, color: "#615749" } },
     ],
     yaxis: { title: "SI" },
-    yaxis2: { title: "Ws", type: "log" },
-    yaxis3: { title: "QS" },
-    yaxis4: { title: "Upper envelope" },
-    xaxis4: { title: "Concentration" },
+    yaxis2: { title: "Invasion (Ws)", type: "log" },
+    yaxis3: { title: "Score" },
+    xaxis3: { title: "Concentration" },
   }, { responsive: true, displaylogo: false });
 }
 
 function renderSelectionPlot(results, bestRows) {
   const seriesStyles = buildSeriesStyles(results, state.latestResult?.options || {});
-  const filtered = results.filter((row) => row.Selection_Mode !== "informational_only");
+  const filtered = results.filter((row) => row.Selection_Status !== "INFORMATIONAL_ONLY");
   const grouped = groupBy(filtered, "Dye");
   const traces = [];
   const dyes = Object.keys(grouped);
@@ -667,22 +588,19 @@ function renderSelectionPlot(results, bestRows) {
           opacity: subset.map((row) => row.Clip_Risk ? 0.62 : row.Near_Clip ? 0.84 : 1),
         },
         line: { color: style.color, width: 2.2 },
-        customdata: subset.map((row) => [row.Stain_Index, row.Weighted_Severity, row.Decision_SI_Component, row.Decision_Ws_Component, row.Decision_Safety_Component]),
+        customdata: subset.map((row) => [row.Stain_Index, row.Invasion_Total]),
         hovertemplate:
           "Series: %{name}<br>" +
           "Conc: %{x}<br>" +
-          "Decision score: %{y:.2f}<br>" +
+          "Score: %{y:.3f}<br>" +
           "SI: %{customdata[0]:.3f}<br>" +
-          "Ws: %{customdata[1]:.3f}<br>" +
-          "SI component: %{customdata[2]:.2f}<br>" +
-          "Ws component: %{customdata[3]:.2f}<br>" +
-          "Safety factor: %{customdata[4]:.2f}<extra></extra>",
+          "Invasion (Ws): %{customdata[1]:.3f}<extra></extra>",
         showlegend: index === 0,
       });
     });
 
     const chosenText = best
-      ? `Chosen: ${best.Concentracion}<br>Score ${formatNumber(best.Decision_Score)}<br>SI ${formatNumber(best.Stain_Index)} | Ws ${formatNumber(best.Weighted_Severity)}`
+      ? `Elegida: ${best.Concentracion}<br>Score ${formatNumber(best.Score)}<br>SI ${formatNumber(best.Stain_Index)} | Invasion ${formatNumber(best.Invasion_Total)}`
       : "No selection";
     annotations.push({
       xref: `x${axisIndex} domain`,
@@ -697,7 +615,7 @@ function renderSelectionPlot(results, bestRows) {
       bordercolor: "rgba(68,51,34,0.16)",
       borderwidth: 1,
       font: { size: 11, color: "#615749" },
-      text: `<b>${dye}</b><br>Decision score ↑ better<br>Score weights sufficient SI and low Ws<br>${chosenText}`,
+      text: `<b>${dye}</b><br>Score = SI / (1 + Invasion) — el pico es la concentración óptima<br>${chosenText}`,
     });
   });
 
@@ -901,17 +819,13 @@ function buildSelectionAxes(count, scoreMode = false) {
 }
 
 function interpretRow(row) {
-  if (row.Selection_Mode === "informational_only") return "Observed for panel context only; not treated as a titration target.";
-  if (row.Clip_Risk) return "Rejected if safer alternatives exist because the target envelope reaches the detector ceiling.";
-  if (row.Near_Clip) return "Usable, but close to the detector limit.";
-  if (row.Selection_Mode === "max_si") return "Selected by strongest separation after safety filtering.";
-  if (Number.isFinite(row.Decision_Score) && Number.isFinite(row.Decision_Ws_Component) && row.Decision_Ws_Component < 0.5) {
-    return `High signal alone was not enough; the decision score dropped because spill cost stayed high (${formatNumber(row.Weighted_Severity)}).`;
+  if (row.Selection_Status === "INFORMATIONAL_ONLY") return "Solo informativo — no es un objetivo de titulación.";
+  if (row.Clip_Risk) return "Riesgo de saturación: el envelope alcanza el límite del detector.";
+  if (row.Near_Clip) return "Cerca del límite del detector; considerar concentración menor.";
+  if (row.Selection_Status === "BELOW_SI_THRESHOLD") {
+    return `Ninguna concentración superó el SI mínimo; se seleccionó la de mayor Score (SI=${formatNumber(row.Stain_Index)}, Ws=${formatNumber(row.Invasion_Total)}).`;
   }
-  if (Number.isFinite(row.Selection_SI_Threshold) && Number.isFinite(row.Selection_Ws_Limit)) {
-    return `Selected because it stayed above SI ${formatNumber(row.Selection_SI_Threshold)} and kept Ws within the best low-spill range (${formatNumber(row.Selection_Ws_Limit)}).`;
-  }
-  return "Selected after requiring sufficient separation and then minimizing spill cost.";
+  return `Score = SI / (1 + Invasion) = ${formatNumber(row.Stain_Index)} / (1 + ${formatNumber(row.Invasion_Total)}) = ${formatNumber(row.Score)}.`;
 }
 
 function setStatus(message) {

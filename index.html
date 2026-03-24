@@ -29,12 +29,11 @@
             <button class="info-button" type="button" data-help-target="config-help" aria-label="Explain configuration parameters">?</button>
           </div>
           <div id="config-help" class="help-panel hidden">
-            <p><strong>Population base</strong> is the parent gate used in the FlowJo export, for example <code>CHO/Singlets</code>.</p>
-            <p><strong>Detector max</strong> is the upper instrument limit used to estimate saturation risk.</p>
-            <p><code>UpperEnvelope = Median_pos + k * rSD_pos</code></p>
-            <p><strong>Minimum acceptable SI</strong> is the global separation threshold used for all titratable dyes before the app starts preferring lower spill.</p>
-            <p><strong>Dye configuration</strong> lets you edit only the fluorescence channel and the color used in the plots.</p>
-            <p>By default, GFP is treated as <code>informational_only</code>: it still contributes spill and can still be invaded by other dyes, but it is not treated as a titration to optimize.</p>
+            <p><strong>Population base</strong> es el gate padre en el export de FlowJo, por ejemplo <code>CHO/Singlets</code>.</p>
+            <p><strong>Detector max</strong> es el límite superior del instrumento para estimar riesgo de saturación.</p>
+            <p><strong>Minimum acceptable SI</strong> es el piso de separación mínima antes de evaluar invasión. Concentraciones con SI por debajo de este valor se descartan primero.</p>
+            <p><strong>Dye configuration</strong> permite editar el canal detector y el color en los plots.</p>
+            <p>GFP está marcado como <code>informational_only</code>: contribuye a la invasión en otros canales y puede ser invadido, pero no se optimiza su concentración.</p>
           </div>
           <div class="field-grid">
             <label class="field wide">
@@ -93,11 +92,10 @@
                 <button class="info-button" type="button" data-help-target="metric-help" aria-label="Explain metric trends">?</button>
               </div>
               <div id="metric-help" class="help-panel hidden">
-                <p><strong>Stain Index</strong> shows separation from the unstained control. Higher is better.</p>
-                <p><strong>Ws</strong> is the weighted spill / spread penalty into the other channels. Lower is better.</p>
-                <p><strong>Quality Score</strong> is a descriptive combined score, but the final decision does not rely only on it.</p>
-                <p><strong>Upper envelope</strong> shows detector pressure using <code>Median + k * rSD</code>. Staying lower is safer.</p>
-                <p>Color is assigned by dye and symbol by clone, and that same mapping is reused across figures. You can edit dye colors in the configuration table.</p>
+                <p><strong>Stain Index</strong> = (Mediana_teñido − Mediana_ST) / (2 × rSD_ST). Mide cuánta señal hay sobre el ruido del control sin tinción. Más alto es mejor.</p>
+                <p><strong>Invasion (Ws)</strong> = suma de (fracción_de_células × SI_aparente_en_canal_vecino) para cada canal vecino. Mide cuánto se ve el colorante como señal real en los otros canales. Más bajo es mejor.</p>
+                <p><strong>Score = SI / (1 + Invasion)</strong>. El pico de esta curva indica la concentración óptima: suficiente señal sin arruinar los canales vecinos.</p>
+                <p>Color por colorante, símbolo por clon. Se pueden editar los colores en la tabla de configuración.</p>
               </div>
               <div id="summary-plot" class="plot plot-tall"></div>
             </div>
@@ -107,11 +105,11 @@
                 <button class="info-button" type="button" data-help-target="selection-help" aria-label="Explain selection criteria plot">?</button>
               </div>
               <div id="selection-help" class="help-panel hidden">
-                <p>Each dye gets its own decision-score panel.</p>
-                <p><strong>Y axis:</strong> Decision score, so higher means a better compromise between enough SI and low spill.</p>
-                <p><strong>X axis:</strong> concentration.</p>
-                <p><strong>Black outlined point:</strong> the selected condition.</p>
-                <p>The score stops rewarding extra brightness strongly once SI is already sufficient, so a brighter point can lose if its spill penalty is much larger.</p>
+                <p>Cada colorante tiene su propio panel de Score.</p>
+                <p><strong>Eje Y:</strong> Score = SI / (1 + Invasion). El <strong>pico</strong> de esta curva es la concentración óptima.</p>
+                <p><strong>Eje X:</strong> concentración.</p>
+                <p><strong>Punto con borde negro:</strong> concentración seleccionada.</p>
+                <p>Una concentración más alta puede tener mayor SI pero también mayor invasión, haciendo que el Score caiga. El pico captura ese balance.</p>
               </div>
               <div id="selection-plot" class="plot"></div>
             </div>

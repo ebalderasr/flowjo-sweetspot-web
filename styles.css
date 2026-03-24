@@ -352,7 +352,7 @@ button:disabled {
 }
 
 .plot-tall {
-  min-height: 760px;
+  min-height: 580px;
 }
 
 @media (max-width: 1120px) {
