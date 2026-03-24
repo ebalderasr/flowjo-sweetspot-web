@@ -31,7 +31,7 @@ It runs entirely in the browser through vanilla JavaScript. No installation, no 
 
 The standard metric for panel optimization is the **Stain Index** (SI):
 
-$$SI = \frac{MFI_{stained+} - MFI_{unstained-}}{2 \times rSD_{unstained-}}$$
+$$SI = \frac{MFI_{\text{stained+}} - MFI_{\text{unstained-}}}{2 \times rSD_{\text{unstained-}}}$$
 
 SI answers one question: *how far above the noise floor is the stained population?* It was designed for assays with discrete positive and negative populations — surface markers, viability dyes — where the goal is to place the two clusters as far apart as possible.
 
@@ -118,21 +118,21 @@ Click **Run analysis**. For each stained sample (dye × concentration × clone),
 
 ### Stain Index
 
-$$SI = \frac{MFI_{stained+} - MFI_{ST-}}{2 \times rSD_{ST-}}$$
+$$SI = \frac{MFI_{\text{stained+}} - MFI_{\text{ST-}}}{2 \times rSD_{\text{ST-}}}$$
 
-Where $MFI_{stained+}$ is the median of the stained sample's positive gate, and $MFI_{ST-}$ and $rSD_{ST-}$ are the median and robust standard deviation of the **unstained control's negative gate**. The unstained control provides the noise floor reference for all dyes in the panel simultaneously.
+Where $MFI_{\text{stained+}}$ is the median of the stained sample's positive gate, and $MFI_{\text{ST-}}$ and $rSD_{\text{ST-}}$ are the median and robust standard deviation of the **unstained control's negative gate**. The unstained control provides the noise floor reference for all dyes in the panel simultaneously.
 
 SI is used as a **correction factor**, not as the primary decision driver. See SI factor below.
 
 ### Saturation envelope
 
-$$UpperEnvelope = MFI_{stained+} + k \times rSD_{stained+} \quad (k = 2)$$
+$$UpperEnvelope = MFI_{\text{stained+}} + k \times rSD_{\text{stained+}} \quad (k = 2)$$
 
 A concentration is flagged as `Clip_Risk` when $UpperEnvelope \geq detector\_max$, and as `Near_Clip` when $UpperEnvelope \geq 0.9 \times detector\_max$. Clip-risk concentrations are excluded from the candidate pool when alternatives exist.
 
 ### Freq\_Signal
 
-$$Freq\_Signal = \frac{\text{cells in target}+ \text{ gate}}{\text{parent cells}} \in [0, 1]$$
+$$Freq\_Signal = \frac{\text{cells in target+ gate}}{\text{parent cells}} \in [0, 1]$$
 
 The primary signal metric: **what fraction of the population is being captured in the target channel at this concentration?** More is better — a higher fraction means more of the biological heterogeneity is represented in the measurement.
 
@@ -140,21 +140,21 @@ The primary signal metric: **what fraction of the population is being captured i
 
 For each neighbor channel $j \neq$ target:
 
-$$FreqInvasion_j = \frac{\text{cells in channel}_j\text{+ gate for this stained sample}}{\text{parent cells}}$$
+$$FreqInvasion_j = \frac{\text{cells in channel } j \text{ positive gate (stained sample)}}{\text{parent cells}}$$
 
-$$Invasion\_Total = \sum_{j \neq target} FreqInvasion_j$$
+$$Invasion\_Total = \sum_{j \neq \text{target}} FreqInvasion_j$$
 
 This measures **how much of the population is being falsely detected in the wrong channels** due to spectral spillover at this concentration. Lower is better.
 
 > **Apparent SI (diagnostic only):** for each neighbor $j$, the app also computes how strongly the invading signal appears in that channel:
-> $$ApparentSI_j = \frac{MFI_{j,stained+} - MFI_{j,ST-}}{2 \times rSD_{j,ST-}}$$
+> $$ApparentSI_j = \frac{MFI_{j,\,\text{stained+}} - MFI_{j,\,\text{ST-}}}{2 \times rSD_{j,\,\text{ST-}}}$$
 > This is stored in the Ws breakdown table and useful for identifying which neighbors are most affected, but it does not enter the Score calculation.
 
 ### SI factor
 
-$$SI\_factor = \min\!\left(\max\!\left(\frac{SI}{SI_{min}},\, 0\right),\, 1\right)$$
+$$SI\_factor = \min\!\left(\max\!\left(\frac{SI}{SI_{\min}},\, 0\right),\, 1\right)$$
 
-A soft gate on signal quality. It ramps linearly from 0 to 1 as SI goes from 0 to $SI_{min}$ (the minimum acceptable SI configured by the user), then stays fixed at 1 for any concentration above the threshold. This means:
+A soft gate on signal quality. It ramps linearly from 0 to 1 as SI goes from 0 to $SI_{\min}$ (the minimum acceptable SI configured by the user), then stays fixed at 1 for any concentration above the threshold. This means:
 
 - A concentration with insufficient signal is **penalized proportionally** — it cannot win if better options exist
 - A concentration that exceeds the threshold is **not further rewarded** — extra brightness beyond the minimum does not improve the score
@@ -167,10 +167,10 @@ The score captures the three-way balance the experiment actually requires:
 
 | Component | Behavior |
 |---|---|
-| $Freq\_Signal \uparrow$ | More cells detected → Score rises |
-| $Invasion\_Total \uparrow$ | More cells in wrong channels → Score falls |
-| $SI\_factor < 1$ | Insufficient signal → Score reduced proportionally |
-| $SI\_factor = 1$ | Signal is adequate → frequencies alone drive the decision |
+| Freq\_Signal ↑ | More cells detected → Score rises |
+| Invasion\_Total ↑ | More cells in wrong channels → Score falls |
+| SI\_factor < 1 | Insufficient signal → Score reduced proportionally |
+| SI\_factor = 1 | Signal is adequate → frequencies alone drive the decision |
 
 The optimal concentration is the one that places the most cells in the right channel, while spilling the fewest into others, given that the signal clears the minimum quality threshold.
 
@@ -179,7 +179,7 @@ The optimal concentration is the one that places the most cells in the right cha
 Given all concentrations for a dye:
 
 1. **Safety filter:** remove concentrations with `Clip_Risk = True` if any safe alternatives exist; then prefer non-`Near_Clip` concentrations
-2. **SI floor:** if any candidate achieves $SI \geq SI_{min}$, restrict the candidate pool to those; otherwise retain all (status `BELOW_SI_THRESHOLD`)
+2. **SI floor:** if any candidate achieves $SI \geq SI_{\min}$, restrict the candidate pool to those; otherwise retain all (status `BELOW_SI_THRESHOLD`)
 3. **Data quality:** prefer candidates with fewer neighbor channels with missing invasion data
 4. **Select:** $\arg\max(Score)$ within the candidate pool
 
