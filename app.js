@@ -19,7 +19,7 @@ const BASE_COLUMN_ALIASES = {
   Concentracion: ["Concentracion", "Concentración", "Concentration", "Dose"],
 };
 
-const CLONE_COLORS = ["#9c2f12", "#244c5a", "#2f7d4d", "#8a3b89", "#c17e19", "#5a4a9e", "#7c5b2a"];
+const DYE_COLORS = ["#9c2f12", "#244c5a", "#2f7d4d", "#8a3b89", "#c17e19", "#5a4a9e", "#7c5b2a"];
 const CLONE_SYMBOLS = ["circle", "square", "diamond", "triangle-up", "x", "cross", "hexagon"];
 
 const state = {
@@ -527,12 +527,12 @@ function renderBestCards(rows) {
 }
 
 function renderSummaryPlot(results) {
-  const cloneStyles = buildCloneStyles(results);
+  const seriesStyles = buildSeriesStyles(results);
   const grouped = groupByComposite(results, ["Dye", "Clone"]);
   const traces = [];
   Object.entries(grouped).forEach(([key, rows]) => {
     const [dye, clone] = key.split("|||");
-    const style = cloneStyles[clone] || cloneStyles.Main;
+    const style = seriesStyles[key] || { color: DYE_COLORS[0], symbol: CLONE_SYMBOLS[0] };
     const ordered = rows.slice().sort((a, b) => naturalSortKey(String(a.Concentracion)) - naturalSortKey(String(b.Concentracion)));
     traces.push({
       type: "scatter",
@@ -603,12 +603,12 @@ function renderSummaryPlot(results) {
 }
 
 function renderSelectionPlot(results, bestRows) {
-  const cloneStyles = buildCloneStyles(results);
+  const seriesStyles = buildSeriesStyles(results);
   const grouped = groupByComposite(results, ["Dye", "Clone"]);
   const traces = [];
   Object.entries(grouped).forEach(([key, rows]) => {
     const [dye, clone] = key.split("|||");
-    const style = cloneStyles[clone] || cloneStyles.Main;
+    const style = seriesStyles[key] || { color: DYE_COLORS[0], symbol: CLONE_SYMBOLS[0] };
     const best = bestRows.find((row) => row.Dye === dye && row.Clone === clone);
     traces.push({
       type: "scatter",
@@ -773,18 +773,29 @@ function groupByComposite(rows, keys) {
   }, {});
 }
 
-function buildCloneStyles(rows) {
+function buildSeriesStyles(rows) {
+  const dyes = [...new Set(rows.map((row) => row.Dye || "Unknown"))];
   const clones = [...new Set(rows.map((row) => row.Clone || "Main"))];
-  const styles = {};
+  const dyeColors = {};
+  const cloneSymbols = {};
+
+  dyes.forEach((dye, index) => {
+    dyeColors[dye] = DYE_COLORS[index % DYE_COLORS.length];
+  });
   clones.forEach((clone, index) => {
-    styles[clone] = {
-      color: CLONE_COLORS[index % CLONE_COLORS.length],
-      symbol: CLONE_SYMBOLS[index % CLONE_SYMBOLS.length],
+    cloneSymbols[clone] = CLONE_SYMBOLS[index % CLONE_SYMBOLS.length];
+  });
+
+  const styles = {};
+  rows.forEach((row) => {
+    const dye = row.Dye || "Unknown";
+    const clone = row.Clone || "Main";
+    const key = `${dye}|||${clone}`;
+    styles[key] = {
+      color: dyeColors[dye],
+      symbol: cloneSymbols[clone],
     };
   });
-  if (!styles.Main) {
-    styles.Main = { color: CLONE_COLORS[0], symbol: CLONE_SYMBOLS[0] };
-  }
   return styles;
 }
 
