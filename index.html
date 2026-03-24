@@ -30,12 +30,10 @@
           </div>
           <div id="config-help" class="help-panel hidden">
             <p><strong>Population base</strong> is the parent gate used in the FlowJo export, for example <code>CHO/Singlets</code>.</p>
-            <p><strong>Analysis mode</strong> controls how the best condition is selected after safety filtering.</p>
-            <p><strong>Detector max</strong>, <strong>clipping k</strong>, and <strong>safe fraction</strong> define the saturation rule:</p>
+            <p><strong>Detector max</strong> is the upper instrument limit used to estimate saturation risk.</p>
             <p><code>UpperEnvelope = Median_pos + k * rSD_pos</code></p>
-            <p><strong>Empty-gate threshold</strong> tells the app when a neighbor gate should be treated as biologically empty instead of problematic missing data.</p>
-            <p><strong>Global SI / Ws thresholds</strong> are fallback values. In <code>rule_based_per_dye</code>, the dye table below can override them.</p>
-            <p><strong>Dye configuration</strong> lets you edit the target fluorescence channel, the color used in the plots, and the per-dye selection logic.</p>
+            <p><strong>Minimum acceptable SI</strong> is the global separation threshold used for all titratable dyes before the app starts preferring lower spill.</p>
+            <p><strong>Dye configuration</strong> lets you edit only the fluorescence channel and the color used in the plots.</p>
             <p>By default, GFP is treated as <code>informational_only</code>: it still contributes spill and can still be invaded by other dyes, but it is not treated as a titration to optimize.</p>
           </div>
           <div class="field-grid">
@@ -48,40 +46,12 @@
               <input id="pop-base" type="text" value="CHO/Singlets" />
             </label>
             <label class="field">
-              <span>Analysis mode</span>
-              <select id="analysis-mode">
-                <option value="rule_based_per_dye">Rule-based per dye</option>
-                <option value="min_ws_after_si_global">Global SI then min Ws</option>
-                <option value="quality_score">Legacy quality score</option>
-              </select>
-            </label>
-            <label class="field">
               <span>Detector max</span>
               <input id="detector-max" type="number" value="1000000" step="1" />
             </label>
             <label class="field">
-              <span>Clipping k</span>
-              <input id="clipping-k" type="number" value="2" step="0.1" />
-            </label>
-            <label class="field">
-              <span>Safe fraction</span>
-              <input id="safe-fraction" type="number" value="0.9" min="0" max="1" step="0.01" />
-            </label>
-            <label class="field">
-              <span>Empty-gate threshold (%)</span>
-              <input id="empty-gate-threshold" type="number" value="0.05" step="0.01" />
-            </label>
-            <label class="field">
-              <span>Global min acceptable SI</span>
+              <span>Minimum acceptable SI</span>
               <input id="min-acceptable-si" type="number" value="7" step="0.1" />
-            </label>
-            <label class="field">
-              <span>Global min SI fraction of max</span>
-              <input id="min-si-fraction-of-max" type="number" value="0.15" step="0.01" />
-            </label>
-            <label class="field">
-              <span>Global Ws equivalence fraction</span>
-              <input id="ws-equivalence-fraction" type="number" value="0.05" step="0.01" />
             </label>
           </div>
 
@@ -93,10 +63,6 @@
                   <th>Dye</th>
                   <th>Color</th>
                   <th>Target channel</th>
-                  <th>Selection mode</th>
-                  <th>Absolute SI threshold</th>
-                  <th>SI fraction of max</th>
-                  <th>Ws equivalence</th>
                 </tr>
               </thead>
               <tbody></tbody>

@@ -6,10 +6,18 @@ const DEFAULT_CHANNELS = {
 };
 
 const DEFAULT_SELECTION_RULES = {
-  "Bodipy": { mode: "min_ws_after_si", min_acceptable_si: 30, min_si_fraction_of_max: 0.15, ws_equivalence_fraction: 0.05 },
-  "CellRox Deep Red": { mode: "min_ws_after_si", min_acceptable_si: 40, min_si_fraction_of_max: 0.15, ws_equivalence_fraction: 0.05 },
-  "TMRM": { mode: "min_ws_after_si", min_acceptable_si: 7, min_si_fraction_of_max: 0.15, ws_equivalence_fraction: 0.05 },
+  "Bodipy": { mode: "min_ws_after_si" },
+  "CellRox Deep Red": { mode: "min_ws_after_si" },
+  "TMRM": { mode: "min_ws_after_si" },
   "GFP (proteina recombinante)": { mode: "informational_only", min_acceptable_si: 0, min_si_fraction_of_max: 0, ws_equivalence_fraction: 0.05 },
+};
+
+const DEFAULT_ENGINE_OPTIONS = {
+  clippingK: 2,
+  safeFraction: 0.9,
+  emptyGateThresholdPercent: 0.05,
+  minSiFractionOfMax: 0.15,
+  wsEquivalenceFraction: 0.05,
 };
 
 const DEFAULT_DYE_COLORS = {
@@ -55,22 +63,11 @@ function renderConfigTable() {
   const tbody = document.querySelector("#config-table tbody");
   tbody.innerHTML = "";
   Object.entries(DEFAULT_CHANNELS).forEach(([dye, channel]) => {
-    const rule = DEFAULT_SELECTION_RULES[dye];
     const row = document.createElement("tr");
     row.innerHTML = `
       <td>${escapeHtml(dye)}</td>
       <td><input data-dye="${escapeHtmlAttr(dye)}" data-key="color" type="color" value="${escapeHtmlAttr(DEFAULT_DYE_COLORS[dye] || DYE_COLORS[0])}" /></td>
       <td><input data-dye="${escapeHtmlAttr(dye)}" data-key="channel" value="${escapeHtmlAttr(channel)}" /></td>
-      <td>
-        <select data-dye="${escapeHtmlAttr(dye)}" data-key="mode">
-          <option value="min_ws_after_si" ${rule.mode === "min_ws_after_si" ? "selected" : ""}>min_ws_after_si</option>
-          <option value="max_si" ${rule.mode === "max_si" ? "selected" : ""}>max_si</option>
-          <option value="informational_only" ${rule.mode === "informational_only" ? "selected" : ""}>informational_only</option>
-        </select>
-      </td>
-      <td><input data-dye="${escapeHtmlAttr(dye)}" data-key="min_acceptable_si" type="number" step="0.1" value="${rule.min_acceptable_si}" /></td>
-      <td><input data-dye="${escapeHtmlAttr(dye)}" data-key="min_si_fraction_of_max" type="number" step="0.01" value="${rule.min_si_fraction_of_max}" /></td>
-      <td><input data-dye="${escapeHtmlAttr(dye)}" data-key="ws_equivalence_fraction" type="number" step="0.01" value="${rule.ws_equivalence_fraction}" /></td>
     `;
     tbody.appendChild(row);
   });
@@ -99,12 +96,10 @@ async function runAnalysis() {
 }
 
 function collectOptions() {
-  const analysisMode = document.getElementById("analysis-mode").value;
   const channelsMap = {};
-  const selectionRules = {};
   const dyeColors = {};
   document.querySelectorAll("#config-table tbody tr").forEach((row) => {
-    const inputs = [...row.querySelectorAll("input, select")];
+    const inputs = [...row.querySelectorAll("input")];
     const dye = inputs[0].dataset.dye;
     const buffer = {};
     inputs.forEach((input) => {
@@ -112,27 +107,19 @@ function collectOptions() {
     });
     dyeColors[dye] = buffer.color;
     channelsMap[dye] = buffer.channel;
-    selectionRules[dye] = {
-      mode: buffer.mode,
-      min_acceptable_si: toFiniteNumber(buffer.min_acceptable_si, 0),
-      min_si_fraction_of_max: toFiniteNumber(buffer.min_si_fraction_of_max, 0),
-      ws_equivalence_fraction: toFiniteNumber(buffer.ws_equivalence_fraction, 0),
-    };
   });
 
   return {
     popBase: document.getElementById("pop-base").value.trim() || "CHO/Singlets",
     detectorMax: toFiniteNumber(document.getElementById("detector-max").value, 1_000_000),
-    clippingK: toFiniteNumber(document.getElementById("clipping-k").value, 2),
-    safeFraction: toFiniteNumber(document.getElementById("safe-fraction").value, 0.9),
-    emptyGateThresholdPercent: toFiniteNumber(document.getElementById("empty-gate-threshold").value, 0.05),
     minAcceptableSi: toFiniteNumber(document.getElementById("min-acceptable-si").value, 7),
-    minSiFractionOfMax: toFiniteNumber(document.getElementById("min-si-fraction-of-max").value, 0.15),
-    wsEquivalenceFraction: toFiniteNumber(document.getElementById("ws-equivalence-fraction").value, 0.05),
-    analysisMode,
+    clippingK: DEFAULT_ENGINE_OPTIONS.clippingK,
+    safeFraction: DEFAULT_ENGINE_OPTIONS.safeFraction,
+    emptyGateThresholdPercent: DEFAULT_ENGINE_OPTIONS.emptyGateThresholdPercent,
+    minSiFractionOfMax: DEFAULT_ENGINE_OPTIONS.minSiFractionOfMax,
+    wsEquivalenceFraction: DEFAULT_ENGINE_OPTIONS.wsEquivalenceFraction,
     channelsMap,
     dyeColors,
-    selectionRules,
   };
 }
 
@@ -410,47 +397,27 @@ function selectBestConditions(results, options) {
     let siThreshold = NaN;
     let wsLimit = NaN;
 
-    if (options.analysisMode === "quality_score") {
-      selectionStatus += "|QUALITY_SCORE_MODE";
-      candidatePool.sort((a, b) =>
-        compareNumbers(a.Missing_Nontrivial_Ws_Channels, b.Missing_Nontrivial_Ws_Channels) ||
-        compareNumbers(b.Quality_Score, a.Quality_Score) ||
-        compareNumbers(b.Stain_Index, a.Stain_Index)
-      );
-    } else {
-      const useRule = options.analysisMode === "rule_based_per_dye";
-      const mode = useRule ? rule.mode : "min_ws_after_si";
-      if (mode === "max_si") {
-        selectionStatus += "|MAX_SI_MODE";
-        candidatePool.sort((a, b) =>
-          compareNumbers(b.Stain_Index, a.Stain_Index) ||
-          compareNumbers(b.Quality_Score, a.Quality_Score) ||
-          compareNumbers(a.Weighted_Severity, b.Weighted_Severity)
-        );
+    const finiteSi = candidatePool.map((row) => row.Stain_Index).filter(Number.isFinite);
+    if (finiteSi.length) {
+      siThreshold = Math.max(rule.min_acceptable_si, Math.max(...finiteSi) * rule.min_si_fraction_of_max);
+      const sufficient = candidatePool.filter((row) => Number.isFinite(row.Stain_Index) && row.Stain_Index >= siThreshold);
+      if (sufficient.length) {
+        candidatePool = sufficient;
+        selectionStatus += "|SUFFICIENT_SI";
       } else {
-        const finiteSi = candidatePool.map((row) => row.Stain_Index).filter(Number.isFinite);
-        if (finiteSi.length) {
-          siThreshold = Math.max(rule.min_acceptable_si, Math.max(...finiteSi) * rule.min_si_fraction_of_max);
-          const sufficient = candidatePool.filter((row) => Number.isFinite(row.Stain_Index) && row.Stain_Index >= siThreshold);
-          if (sufficient.length) {
-            candidatePool = sufficient;
-            selectionStatus += "|SUFFICIENT_SI";
-          } else {
-            selectionStatus += "|NO_SI_THRESHOLD_PASS";
-          }
-        }
-        const minWs = Math.min(...candidatePool.map((row) => row.Weighted_Severity));
-        wsLimit = minWs * (1 + rule.ws_equivalence_fraction);
-        candidatePool = candidatePool.filter((row) => row.Weighted_Severity <= wsLimit);
-        candidatePool.sort((a, b) =>
-          compareNumbers(b.Stain_Index, a.Stain_Index) ||
-          compareNumbers(b.Quality_Score, a.Quality_Score) ||
-          compareNumbers(a.Weighted_Severity, b.Weighted_Severity)
-        );
+        selectionStatus += "|NO_SI_THRESHOLD_PASS";
       }
     }
+    const minWs = Math.min(...candidatePool.map((row) => row.Weighted_Severity));
+    wsLimit = minWs * (1 + rule.ws_equivalence_fraction);
+    candidatePool = candidatePool.filter((row) => row.Weighted_Severity <= wsLimit);
+    candidatePool.sort((a, b) =>
+      compareNumbers(b.Stain_Index, a.Stain_Index) ||
+      compareNumbers(b.Quality_Score, a.Quality_Score) ||
+      compareNumbers(a.Weighted_Severity, b.Weighted_Severity)
+    );
 
-    const selectionMode = options.analysisMode === "quality_score" ? "quality_score" : resolveRule(dye, options).mode;
+    const selectionMode = resolveRule(dye, options).mode;
     const scoreReferencePool = candidatePool.slice();
     const referenceWs = scoreReferencePool.length ? Math.min(...scoreReferencePool.map((row) => row.Weighted_Severity)) : NaN;
 
@@ -486,12 +453,12 @@ function selectBestConditions(results, options) {
 }
 
 function resolveRule(dye, options) {
-  const baseRule = options.selectionRules[dye] || {};
+  const baseRule = DEFAULT_SELECTION_RULES[dye] || {};
   return {
     mode: baseRule.mode || "min_ws_after_si",
-    min_acceptable_si: Number.isFinite(baseRule.min_acceptable_si) ? baseRule.min_acceptable_si : options.minAcceptableSi,
-    min_si_fraction_of_max: Number.isFinite(baseRule.min_si_fraction_of_max) ? baseRule.min_si_fraction_of_max : options.minSiFractionOfMax,
-    ws_equivalence_fraction: Number.isFinite(baseRule.ws_equivalence_fraction) ? baseRule.ws_equivalence_fraction : options.wsEquivalenceFraction,
+    min_acceptable_si: baseRule.mode === "informational_only" ? 0 : options.minAcceptableSi,
+    min_si_fraction_of_max: baseRule.mode === "informational_only" ? 0 : options.minSiFractionOfMax,
+    ws_equivalence_fraction: baseRule.mode === "informational_only" ? 0.05 : options.wsEquivalenceFraction,
   };
 }
 
