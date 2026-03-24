@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FlowJo SweetSpot Web</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <script defer src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">GitHub Pages Cytometry Tool</p>
+          <h1>FlowJo SweetSpot Web</h1>
+          <p class="lede">
+            Load a FlowJo-exported <code>.csv</code> or <code>.xlsx</code>, tune the panel parameters,
+            and run the sweet-spot analysis directly in the browser.
+          </p>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel controls">
+          <div class="section-head">
+            <h2>Inputs</h2>
+            <button class="info-button" type="button" data-help-target="config-help" aria-label="Explain configuration parameters">?</button>
+          </div>
+          <div id="config-help" class="help-panel hidden">
+            <p><strong>Population base</strong> is the parent gate used in the FlowJo export, for example <code>CHO/Singlets</code>.</p>
+            <p><strong>Analysis mode</strong> controls how the best condition is selected after safety filtering.</p>
+            <p><strong>Detector max</strong>, <strong>clipping k</strong>, and <strong>safe fraction</strong> define the saturation rule:</p>
+            <p><code>UpperEnvelope = Median_pos + k * rSD_pos</code></p>
+            <p><strong>Empty-gate threshold</strong> tells the app when a neighbor gate should be treated as biologically empty instead of problematic missing data.</p>
+            <p><strong>Global SI / Ws thresholds</strong> are fallback values. In <code>rule_based_per_dye</code>, the dye table below can override them.</p>
+            <p><strong>Dye configuration</strong> lets you edit the target fluorescence channel and the per-dye selection logic.</p>
+          </div>
+          <div class="field-grid">
+            <label class="field wide">
+              <span>FlowJo file</span>
+              <input id="file-input" type="file" accept=".csv,.xlsx,.xls" />
+            </label>
+            <label class="field">
+              <span>Population base</span>
+              <input id="pop-base" type="text" value="CHO/Singlets" />
+            </label>
+            <label class="field">
+              <span>Analysis mode</span>
+              <select id="analysis-mode">
+                <option value="rule_based_per_dye">Rule-based per dye</option>
+                <option value="min_ws_after_si_global">Global SI then min Ws</option>
+                <option value="quality_score">Legacy quality score</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Detector max</span>
+              <input id="detector-max" type="number" value="1000000" step="1" />
+            </label>
+            <label class="field">
+              <span>Clipping k</span>
+              <input id="clipping-k" type="number" value="2" step="0.1" />
+            </label>
+            <label class="field">
+              <span>Safe fraction</span>
+              <input id="safe-fraction" type="number" value="0.9" min="0" max="1" step="0.01" />
+            </label>
+            <label class="field">
+              <span>Empty-gate threshold (%)</span>
+              <input id="empty-gate-threshold" type="number" value="0.05" step="0.01" />
+            </label>
+            <label class="field">
+              <span>Global min acceptable SI</span>
+              <input id="min-acceptable-si" type="number" value="7" step="0.1" />
+            </label>
+            <label class="field">
+              <span>Global min SI fraction of max</span>
+              <input id="min-si-fraction-of-max" type="number" value="0.15" step="0.01" />
+            </label>
+            <label class="field">
+              <span>Global Ws equivalence fraction</span>
+              <input id="ws-equivalence-fraction" type="number" value="0.05" step="0.01" />
+            </label>
+          </div>
+
+          <h3>Dye configuration</h3>
+          <div class="table-wrap">
+            <table class="config-table" id="config-table">
+              <thead>
+                <tr>
+                  <th>Dye</th>
+                  <th>Target channel</th>
+                  <th>Selection mode</th>
+                  <th>Absolute SI threshold</th>
+                  <th>SI fraction of max</th>
+                  <th>Ws equivalence</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <div class="actions">
+            <button id="analyze-button" class="primary">Run analysis</button>
+            <button id="download-best-button" class="secondary" disabled>Download best conditions CSV</button>
+            <button id="download-results-button" class="secondary" disabled>Download full results CSV</button>
+          </div>
+          <p id="status-line" class="status-line">Waiting for file.</p>
+          <div id="error-box" class="error-box hidden"></div>
+        </section>
+
+        <section class="panel results">
+          <div class="results-head">
+            <h2>Results</h2>
+            <p id="run-summary" class="muted">No analysis yet.</p>
+          </div>
+
+          <div id="best-cards" class="best-cards"></div>
+
+          <div class="plot-grid">
+            <div class="plot-card">
+              <div class="section-head">
+                <h3>Metric trends</h3>
+                <button class="info-button" type="button" data-help-target="metric-help" aria-label="Explain metric trends">?</button>
+              </div>
+              <div id="metric-help" class="help-panel hidden">
+                <p><strong>Stain Index</strong> shows separation from the unstained control. Higher is better.</p>
+                <p><strong>Ws</strong> is the weighted spill / spread penalty into the other channels. Lower is better.</p>
+                <p><strong>Quality Score</strong> is a descriptive combined score, but the final decision does not rely only on it.</p>
+                <p><strong>Upper envelope</strong> shows detector pressure using <code>Median + k * rSD</code>. Staying lower is safer.</p>
+                <p>Color and symbol are assigned by clone, so the same clone keeps the same visual identity across figures.</p>
+              </div>
+              <div id="summary-plot" class="plot plot-tall"></div>
+            </div>
+            <div class="plot-card">
+              <div class="section-head">
+                <h3>Selection criteria</h3>
+                <button class="info-button" type="button" data-help-target="selection-help" aria-label="Explain selection criteria plot">?</button>
+              </div>
+              <div id="selection-help" class="help-panel hidden">
+                <p>Each point is one tested condition.</p>
+                <p><strong>Y axis:</strong> Stain Index, so higher means stronger separation from ST.</p>
+                <p><strong>X axis:</strong> Ws on a log scale, so moving left means less spill / intrusion.</p>
+                <p>The recommended region is high enough in SI, left enough in Ws, and outside clipping risk.</p>
+              </div>
+              <div id="selection-plot" class="plot"></div>
+            </div>
+          </div>
+
+          <div class="table-grid">
+            <div class="table-card">
+              <h3>Best conditions</h3>
+              <div id="best-table"></div>
+            </div>
+            <div class="table-card">
+              <h3>Ws breakdown</h3>
+              <div id="ws-table"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
