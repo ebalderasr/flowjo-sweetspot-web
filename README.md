@@ -27,26 +27,42 @@ It runs entirely in the browser through vanilla JavaScript. No installation, no 
 
 ---
 
-## Why Stain Index is not enough
+## The problem: dyes are not antibodies
 
-The standard metric for panel optimization is the **Stain Index** (SI):
+### How Stain Index was designed to work
 
-$$SI = \frac{MFI_{\text{stained+}} - MFI_{\text{unstained-}}}{2 \times rSD_{\text{unstained-}}}$$
+The Stain Index (SI) is the standard metric for flow cytometry panel optimization:
 
-SI answers one question: *how far above the noise floor is the stained population?* It was designed for assays with discrete positive and negative populations — surface markers, viability dyes — where the goal is to place the two clusters as far apart as possible.
+$$SI = \frac{MFI_{\text{bright}} - MFI_{\text{dim}}}{2 \times rSD_{\text{dim}}}$$
 
-**Functional and physiological markers behave differently.** TMRM (mitochondrial potential), Bodipy (lipid content), CellRox Deep Red (oxidative stress), and GFP reporter expression do not produce a bimodal distribution. Instead, the entire cell population shifts as a unit. There is no true negative subpopulation in the stained sample. The distribution is **continuous and unimodal**.
+It measures how well two populations are resolved: the bright (positive) cells and the dim (negative) cells. The denominator anchors the measurement to the spread of the negative cluster, so a high SI means the two populations are cleanly separated and the instrument can reliably assign each cell to one group.
 
-In this context, maximizing SI means maximizing absolute brightness — using as much dye as possible. This creates four compounding problems:
+This works because **antibody-conjugated fluorophores create genuine bimodality**. A CD3-PE antibody stains T cells and leaves all other cells unstained. Biology itself creates the two populations. The job of panel optimization is then to choose reagent concentrations that maximize the gap between those clusters — and SI captures that gap directly.
 
-| Problem | Mechanism | Consequence |
+### Why functional dyes break this framework
+
+Physiological dyes — TMRM (mitochondrial potential), Bodipy (lipid content), CellRox Deep Red (oxidative stress), and GFP as a recombinant reporter — do not produce two populations. They load into **every cell** based on that cell's current metabolic or physiological state. The result is a single continuous distribution that shifts along the fluorescence axis as a unit. There is no biologically negative subpopulation.
+
+This means the classic SI optimization question — *how do I maximize the gap between positive and negative?* — does not apply. **With dyes, all cells are positive.** What varies is how positive each cell is, and that variation is the biological information you are trying to preserve.
+
+### The real optimization problem for dye panels
+
+Because dye uptake is concentration-dependent, the experimenter controls the brightness of the distribution by choosing the staining concentration. Higher concentration → brighter signal → apparently higher SI. But this creates a false incentive:
+
+| Problem | What happens at high concentration | Consequence |
 |---|---|---|
-| **Detector saturation** | High brightness pushes the signal toward the instrument ceiling | Cells that differ biologically are compressed into the same voltage range; biological variation becomes invisible |
-| **Spreading error** | Brighter signals generate more photon shot noise and electronic noise in adjacent channels | Other dyes' distributions widen, reducing their resolution |
-| **Hidden heterogeneity** | The distribution compresses at high brightness | Cell-to-cell differences in metabolic state — the whole point of the assay — are obscured |
-| **Multivariate corruption** | One dye's spreading error invades another channel | Mitochondrial potential, lipid content, and ROS can no longer be treated as independent measurements in joint analysis |
+| **Detector saturation** | The upper tail of the distribution hits the instrument ceiling | Cells that differ biologically are compressed to the same voltage; heterogeneity is lost |
+| **Spreading error** | Brighter signals produce more photon shot noise in adjacent channels | Other dyes in the panel are harder to resolve |
+| **Hidden heterogeneity** | The distribution compresses near the detector limit | Cell-to-cell differences in metabolic state — the biological signal of interest — become invisible |
+| **Multivariate corruption** | Spreading error from one dye invades other channels | Mitochondrial potential, lipid content, and ROS can no longer be analyzed jointly as independent measurements |
 
-The objective is not to maximize signal. It is to **find the lowest concentration that still captures as much of the population as possible, while introducing the least contamination into the other channels**. Stain Index cannot answer that question directly.
+### This tool's approach
+
+Since there is no biological negative population, this tool uses the **unstained control as a surrogate dim reference** — the cells with zero dye present, whose fluorescence reflects only autofluorescence and instrument noise. This lets SI remain a meaningful indicator of whether the signal clears the noise floor.
+
+But SI alone still does not answer the real question. The primary decision criterion is therefore **population behavior**: at a given concentration, what fraction of cells is being captured in the target channel, and what fraction is spilling into channels that belong to other dyes? The concentration that maximizes the first while minimizing the second — above a minimum signal quality threshold — is the sweet spot.
+
+This is what the Score metric computes directly, without assuming that brighter is always better.
 
 ---
 
