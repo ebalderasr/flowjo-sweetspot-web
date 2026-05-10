@@ -39,6 +39,7 @@ const state = {
 document.addEventListener("DOMContentLoaded", () => {
   renderConfigTable();
   initInfoButtons();
+  initDropZone();
   document.getElementById("analyze-button").addEventListener("click", runAnalysis);
   document.getElementById("download-best-button").addEventListener("click", () => downloadCsv("best_conditions.csv", state.latestResult?.best || []));
   document.getElementById("download-results-button").addEventListener("click", () => downloadCsv("results.csv", state.latestResult?.results || []));
@@ -55,16 +56,28 @@ function initInfoButtons() {
 }
 
 function renderConfigTable() {
-  const tbody = document.querySelector("#config-table tbody");
-  tbody.innerHTML = "";
+  const container = document.getElementById("dye-config-rows");
+  container.innerHTML = "";
   Object.entries(DEFAULT_CHANNELS).forEach(([dye, channel]) => {
-    const row = document.createElement("tr");
+    const defaultColor = DEFAULT_DYE_COLORS[dye] || DYE_COLORS[0];
+    const row = document.createElement("div");
+    row.className = "fluor-row";
     row.innerHTML = `
-      <td>${escapeHtml(dye)}</td>
-      <td><input data-dye="${escapeHtmlAttr(dye)}" data-key="color" type="color" value="${escapeHtmlAttr(DEFAULT_DYE_COLORS[dye] || DYE_COLORS[0])}" /></td>
-      <td><input data-dye="${escapeHtmlAttr(dye)}" data-key="channel" value="${escapeHtmlAttr(channel)}" /></td>
+      <input type="color" class="fluor-swatch"
+             data-dye="${escapeHtmlAttr(dye)}" data-key="color"
+             value="${escapeHtmlAttr(defaultColor)}" />
+      <span class="fluor-dot" style="background:${escapeHtmlAttr(defaultColor)};"></span>
+      <div class="fluor-text">
+        <span class="fluor-name">${escapeHtml(dye)}</span>
+        <input type="text" class="fluor-channel"
+               data-dye="${escapeHtmlAttr(dye)}" data-key="channel"
+               value="${escapeHtmlAttr(channel)}" />
+      </div>
     `;
-    tbody.appendChild(row);
+    const colorInput = row.querySelector('input[type="color"]');
+    const dot = row.querySelector('.fluor-dot');
+    colorInput.addEventListener("input", () => { dot.style.background = colorInput.value; });
+    container.appendChild(row);
   });
 }
 
@@ -93,15 +106,13 @@ async function runAnalysis() {
 function collectOptions() {
   const channelsMap = {};
   const dyeColors = {};
-  document.querySelectorAll("#config-table tbody tr").forEach((row) => {
-    const inputs = [...row.querySelectorAll("input")];
-    const dye = inputs[0].dataset.dye;
-    const buffer = {};
-    inputs.forEach((input) => {
-      buffer[input.dataset.key] = input.value;
-    });
-    dyeColors[dye] = buffer.color;
-    channelsMap[dye] = buffer.channel;
+  document.querySelectorAll("#dye-config-rows .fluor-row").forEach((row) => {
+    const colorInput = row.querySelector('input[data-key="color"]');
+    const channelInput = row.querySelector('input[data-key="channel"]');
+    if (!colorInput || !channelInput) return;
+    const dye = colorInput.dataset.dye;
+    dyeColors[dye] = colorInput.value;
+    channelsMap[dye] = channelInput.value;
   });
 
   return {
@@ -460,7 +471,7 @@ function renderResults(result, fileName) {
   renderSelectionPlot(result.results, result.best);
   document.getElementById("download-best-button").disabled = false;
   document.getElementById("download-results-button").disabled = false;
-  document.getElementById("action-bar").classList.remove("hidden");
+  document.getElementById("results-section").classList.remove("hidden");
 }
 
 function renderBestCards(rows) {
@@ -911,8 +922,62 @@ function escapeHtmlAttr(text) {
   return escapeHtml(text);
 }
 
+function initDropZone() {
+  const zone = document.getElementById("drop-zone");
+  const input = document.getElementById("file-input");
+
+  zone.addEventListener("click", (e) => {
+    if (e.target !== input) input.click();
+  });
+
+  zone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    zone.classList.add("dz-dragover");
+  });
+
+  zone.addEventListener("dragleave", () => zone.classList.remove("dz-dragover"));
+
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.classList.remove("dz-dragover");
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      updateDropZone(file.name);
+      document.getElementById("analyze-button").disabled = false;
+    }
+  });
+
+  input.addEventListener("change", () => {
+    const file = input.files[0];
+    if (file) {
+      updateDropZone(file.name);
+      document.getElementById("analyze-button").disabled = false;
+    }
+  });
+}
+
+function updateDropZone(filename) {
+  const zone = document.getElementById("drop-zone");
+  zone.querySelector(".dz-default-state").classList.add("hidden");
+  const fileState = zone.querySelector(".dz-file-state");
+  fileState.classList.remove("hidden");
+  const nameEl = fileState.querySelector(".dz-filename");
+  if (nameEl) nameEl.textContent = filename;
+}
+
+function resetDropZone() {
+  const zone = document.getElementById("drop-zone");
+  zone.querySelector(".dz-default-state").classList.remove("hidden");
+  zone.querySelector(".dz-file-state").classList.add("hidden");
+}
+
 function analyzeAnother() {
   document.getElementById("file-input").value = "";
+  resetDropZone();
+  document.getElementById("analyze-button").disabled = true;
   document.getElementById("best-cards").innerHTML = "";
   document.getElementById("best-table").innerHTML = "";
   document.getElementById("ws-table").innerHTML = "";
@@ -921,9 +986,9 @@ function analyzeAnother() {
   document.getElementById("run-summary").textContent = "Sin análisis todavía.";
   document.getElementById("download-best-button").disabled = true;
   document.getElementById("download-results-button").disabled = true;
-  document.getElementById("action-bar").classList.add("hidden");
+  document.getElementById("results-section").classList.add("hidden");
   state.latestResult = null;
-  setStatus("Esperando archivo.");
+  setStatus("Selecciona un archivo para habilitar el análisis.");
   clearError();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
