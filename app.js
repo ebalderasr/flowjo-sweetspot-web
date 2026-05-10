@@ -45,7 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function initInfoButtons() {
-  document.querySelectorAll(".info-button").forEach((button) => {
+  document.querySelectorAll(".btn-info").forEach((button) => {
     button.addEventListener("click", () => {
       const target = document.getElementById(button.dataset.helpTarget);
       if (!target) return;
@@ -460,6 +460,7 @@ function renderResults(result, fileName) {
   renderSelectionPlot(result.results, result.best);
   document.getElementById("download-best-button").disabled = false;
   document.getElementById("download-results-button").disabled = false;
+  document.getElementById("action-bar").classList.remove("hidden");
 }
 
 function renderBestCards(rows) {
@@ -908,4 +909,21 @@ function escapeHtml(text) {
 
 function escapeHtmlAttr(text) {
   return escapeHtml(text);
+}
+
+function analyzeAnother() {
+  document.getElementById("file-input").value = "";
+  document.getElementById("best-cards").innerHTML = "";
+  document.getElementById("best-table").innerHTML = "";
+  document.getElementById("ws-table").innerHTML = "";
+  document.getElementById("summary-plot").innerHTML = "";
+  document.getElementById("selection-plot").innerHTML = "";
+  document.getElementById("run-summary").textContent = "Sin análisis todavía.";
+  document.getElementById("download-best-button").disabled = true;
+  document.getElementById("download-results-button").disabled = true;
+  document.getElementById("action-bar").classList.add("hidden");
+  state.latestResult = null;
+  setStatus("Esperando archivo.");
+  clearError();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }

@@ -1,9 +1,13 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FlowJo SweetSpot Web</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <link rel="stylesheet" href="./styles.css" />
     <script defer src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
     <script defer src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
@@ -13,7 +17,7 @@
     <header class="hc-header">
       <div class="hc-header-brand">
         <div class="hc-logo" aria-hidden="true">
-          <span class="hc-logo-glyph">FJ</span>
+          <span class="hc-logo-glyph">⚗</span>
         </div>
         <div class="hc-header-text">
           <div class="hc-title-line">
@@ -28,114 +32,155 @@
         </a>
       </div>
     </header>
-    <div class="page-shell">
-      <main class="layout">
-        <section class="panel controls">
-          <div class="section-head">
-            <h2>Inputs</h2>
-            <button class="info-button" type="button" data-help-target="config-help" aria-label="Explain configuration parameters">?</button>
-          </div>
-          <div id="config-help" class="help-panel hidden">
-            <p><strong>Population base</strong> es el gate padre en el export de FlowJo, por ejemplo <code>CHO/Singlets</code>.</p>
-            <p><strong>Detector max</strong> es el límite superior del instrumento para estimar riesgo de saturación.</p>
-            <p><strong>Minimum acceptable SI</strong> es el piso de separación mínima antes de evaluar invasión. Concentraciones con SI por debajo de este valor se descartan primero.</p>
-            <p><strong>Dye configuration</strong> permite editar el canal detector y el color en los plots.</p>
-            <p>GFP está marcado como <code>informational_only</code>: contribuye a la invasión en otros canales y puede ser invadido, pero no se optimiza su concentración.</p>
-          </div>
-          <div class="field-grid">
-            <label class="field wide">
-              <span>FlowJo file</span>
+
+    <div class="md-main">
+      <div class="layout">
+
+        <!-- ── Panel de controles ─────────────────────────────────── -->
+        <section class="md-card controls">
+          <h2 class="md-card-title">Configuración</h2>
+          <p class="md-card-subtitle">Carga tu archivo de FlowJo y ajusta los parámetros antes de analizar.</p>
+
+          <div class="settings-group">
+            <div class="settings-group-header">
+              <div class="settings-group-title">Archivo de entrada</div>
+              <button class="btn-info" type="button" data-help-target="config-help" aria-label="Explicar parámetros de configuración">?</button>
+            </div>
+            <div id="config-help" class="help-panel hidden">
+              <p><strong>Population base</strong> es el gate padre en el export de FlowJo, por ejemplo <code>CHO/Singlets</code>.</p>
+              <p><strong>Detector max</strong> es el límite superior del instrumento para estimar riesgo de saturación.</p>
+              <p><strong>Minimum acceptable SI</strong> es el piso de separación mínima antes de evaluar invasión. Concentraciones con SI por debajo de este valor se descartan primero.</p>
+              <p><strong>Dye configuration</strong> permite editar el canal detector y el color en los plots.</p>
+              <p>GFP está marcado como <code>informational_only</code>: contribuye a la invasión en otros canales y puede ser invadido, pero no se optimiza su concentración.</p>
+            </div>
+            <label class="field">
+              <span>FlowJo file (CSV / XLSX)</span>
               <input id="file-input" type="file" accept=".csv,.xlsx,.xls" />
             </label>
-            <label class="field">
-              <span>Population base</span>
-              <input id="pop-base" type="text" value="CHO/Singlets" />
-            </label>
-            <label class="field">
-              <span>Detector max</span>
-              <input id="detector-max" type="number" value="1000000" step="1" />
-            </label>
-            <label class="field">
-              <span>Minimum acceptable SI</span>
-              <input id="min-acceptable-si" type="number" value="7" step="0.1" />
-            </label>
           </div>
 
-          <h3>Dye configuration</h3>
-          <div class="table-wrap">
-            <table class="config-table" id="config-table">
-              <thead>
-                <tr>
-                  <th>Dye</th>
-                  <th>Color</th>
-                  <th>Target channel</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+          <div class="settings-group">
+            <div class="settings-group-title">Parámetros de análisis</div>
+            <div class="field-grid">
+              <label class="field">
+                <span>Population base</span>
+                <input id="pop-base" type="text" value="CHO/Singlets" />
+              </label>
+              <label class="field">
+                <span>Detector max</span>
+                <input id="detector-max" type="number" value="1000000" step="1" />
+              </label>
+              <label class="field wide">
+                <span>Minimum acceptable SI</span>
+                <input id="min-acceptable-si" type="number" value="7" step="0.1" />
+              </label>
+            </div>
           </div>
 
-          <div class="actions">
-            <button id="analyze-button" class="primary">Run analysis</button>
-            <button id="download-best-button" class="secondary" disabled>Download best conditions CSV</button>
-            <button id="download-results-button" class="secondary" disabled>Download full results CSV</button>
+          <div class="settings-group">
+            <div class="settings-group-title">Configuración de colorantes</div>
+            <div class="table-wrap">
+              <table class="config-table" id="config-table">
+                <thead>
+                  <tr>
+                    <th>Colorante</th>
+                    <th>Color</th>
+                    <th>Canal objetivo</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
           </div>
-          <p id="status-line" class="status-line">Waiting for file.</p>
+
+          <div class="analyze-row">
+            <button id="analyze-button" class="btn-analyze">
+              <span class="material-icons" style="font-size:20px;">play_arrow</span>
+              Analizar
+            </button>
+            <p id="status-line" class="analyze-hint">Esperando archivo.</p>
+          </div>
           <div id="error-box" class="error-box hidden"></div>
         </section>
 
-        <section class="panel results">
-          <div class="results-head">
-            <h2>Results</h2>
-            <p id="run-summary" class="muted">No analysis yet.</p>
+        <!-- ── Panel de resultados ────────────────────────────────── -->
+        <section class="results">
+          <div class="md-card results-inner">
+            <div class="results-head">
+              <div>
+                <h2 class="md-card-title">Resultados</h2>
+                <p id="run-summary" class="md-card-subtitle">Sin análisis todavía.</p>
+              </div>
+            </div>
+
+            <div id="best-cards" class="best-cards"></div>
+
+            <div class="plot-grid">
+              <div class="md-card plot-card">
+                <div class="section-head">
+                  <h3>Tendencias de métricas</h3>
+                  <button class="btn-info" type="button" data-help-target="metric-help" aria-label="Explicar tendencias de métricas">?</button>
+                </div>
+                <div id="metric-help" class="help-panel hidden">
+                  <p><strong>Stain Index</strong> = (Mediana_teñido − Mediana_ST) / (2 × rSD_ST). Métrica de referencia para la calidad de la señal; se usa como factor corrector, no como criterio principal.</p>
+                  <p><strong>% positivas (Freq_Signal)</strong>: fracción de células que cae en el gate positivo del canal propio. Más alto es mejor — refleja cuánta población está siendo detectada.</p>
+                  <p><strong>Invasión total</strong>: suma de fracciones de células que aparecen en los gates positivos de los canales vecinos. Más bajo es mejor.</p>
+                  <p><strong>Score = (% positivas / (1 + invasión total)) × SI_factor</strong>, donde SI_factor sube linealmente de 0 a 1 entre SI=0 y SI=mínimo aceptable, y se estabiliza en 1 a partir de ahí. El pico del Score es la concentración óptima.</p>
+                  <p>Color por colorante, símbolo por clon. Se pueden editar los colores en la tabla de configuración.</p>
+                </div>
+                <div id="summary-plot" class="plot plot-tall"></div>
+              </div>
+              <div class="md-card plot-card">
+                <div class="section-head">
+                  <h3>Criterios de selección</h3>
+                  <button class="btn-info" type="button" data-help-target="selection-help" aria-label="Explicar criterios de selección">?</button>
+                </div>
+                <div id="selection-help" class="help-panel hidden">
+                  <p>Cada colorante tiene su propio panel de Score.</p>
+                  <p><strong>Eje Y:</strong> Score = (% positivas / (1 + invasión)) × SI_factor. El <strong>pico</strong> de esta curva es la concentración óptima.</p>
+                  <p><strong>Eje X:</strong> concentración.</p>
+                  <p><strong>Punto con borde negro:</strong> concentración seleccionada.</p>
+                  <p>Al aumentar la concentración, más células pueden ser positivas (sube Score), pero también pueden invadir otros canales (baja Score). El pico captura ese balance. El SI actúa como corrector: si la señal es muy débil, el Score se reduce proporcionalmente.</p>
+                </div>
+                <div id="selection-plot" class="plot"></div>
+              </div>
+            </div>
+
+            <div class="table-grid">
+              <div class="table-card">
+                <h3>Mejores condiciones</h3>
+                <div id="best-table"></div>
+              </div>
+              <div class="table-card">
+                <h3>Desglose Ws</h3>
+                <div id="ws-table"></div>
+              </div>
+            </div>
           </div>
 
-          <div id="best-cards" class="best-cards"></div>
-
-          <div class="plot-grid">
-            <div class="plot-card">
-              <div class="section-head">
-                <h3>Metric trends</h3>
-                <button class="info-button" type="button" data-help-target="metric-help" aria-label="Explain metric trends">?</button>
-              </div>
-              <div id="metric-help" class="help-panel hidden">
-                <p><strong>Stain Index</strong> = (Mediana_teñido − Mediana_ST) / (2 × rSD_ST). Métrica de referencia para la calidad de la señal; se usa como factor corrector, no como criterio principal.</p>
-                <p><strong>% positivas (Freq_Signal)</strong>: fracción de células que cae en el gate positivo del canal propio. Más alto es mejor — refleja cuánta población está siendo detectada.</p>
-                <p><strong>Invasión total</strong>: suma de fracciones de células que aparecen en los gates positivos de los canales vecinos. Más bajo es mejor.</p>
-                <p><strong>Score = (% positivas / (1 + invasión total)) × SI_factor</strong>, donde SI_factor sube linealmente de 0 a 1 entre SI=0 y SI=mínimo aceptable, y se estabiliza en 1 a partir de ahí. El pico del Score es la concentración óptima.</p>
-                <p>Color por colorante, símbolo por clon. Se pueden editar los colores en la tabla de configuración.</p>
-              </div>
-              <div id="summary-plot" class="plot plot-tall"></div>
-            </div>
-            <div class="plot-card">
-              <div class="section-head">
-                <h3>Selection criteria</h3>
-                <button class="info-button" type="button" data-help-target="selection-help" aria-label="Explain selection criteria plot">?</button>
-              </div>
-              <div id="selection-help" class="help-panel hidden">
-                <p>Cada colorante tiene su propio panel de Score.</p>
-                <p><strong>Eje Y:</strong> Score = (% positivas / (1 + invasión)) × SI_factor. El <strong>pico</strong> de esta curva es la concentración óptima.</p>
-                <p><strong>Eje X:</strong> concentración.</p>
-                <p><strong>Punto con borde negro:</strong> concentración seleccionada.</p>
-                <p>Al aumentar la concentración, más células pueden ser positivas (sube Score), pero también pueden invadir otros canales (baja Score). El pico captura ese balance. El SI actúa como corrector: si la señal es muy débil, el Score se reduce proporcionalmente.</p>
-              </div>
-              <div id="selection-plot" class="plot"></div>
-            </div>
-          </div>
-
-          <div class="table-grid">
-            <div class="table-card">
-              <h3>Best conditions</h3>
-              <div id="best-table"></div>
-            </div>
-            <div class="table-card">
-              <h3>Ws breakdown</h3>
-              <div id="ws-table"></div>
-            </div>
+          <!-- Barra de acciones (visible tras el análisis) -->
+          <div id="action-bar" class="md-action-bar hidden">
+            <button id="download-best-button" class="btn-md-fab" disabled>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Descargar mejores condiciones
+            </button>
+            <button id="download-results-button" class="btn-md-tonal" disabled>
+              <span class="material-icons" style="font-size:20px;">table_view</span>
+              Resultados completos
+            </button>
+            <button class="btn-md-outlined" onclick="analyzeAnother()">
+              Analizar otra muestra
+            </button>
           </div>
         </section>
-      </main>
+
+      </div>
     </div>
+
     <footer class="hc-footer">
       <div class="hc-footer-inner">
         <div class="hc-footer-suite">
