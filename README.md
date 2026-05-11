@@ -68,6 +68,10 @@ This is what the Score metric computes directly, without assuming that brighter 
 
 ## How it works
 
+Four steps. No command line. No installation.
+
+<br>
+
 ### 1. Prepare the FlowJo export
 
 In FlowJo, set up the following gate structure under your parent gate (e.g. `CHO/Singlets`):
@@ -92,7 +96,15 @@ Export as `.csv` or `.xlsx`. One sheet, one row per sample.
 
 > The app recognizes English aliases automatically: `Dye`, `Stain`, `Marker` for the dye column; `Concentration`, `Dose` for the concentration column.
 
-### 2. Configure
+### 2. Upload your FlowJo export
+
+Drop the `.csv` or `.xlsx` file onto the upload area or click to browse. Analysis is enabled once the file is loaded in the browser.
+
+<img src="Fig/Fig_1.png" alt="Step 1 - Upload the FlowJo CSV or XLSX export" width="700"/>
+
+<br>
+
+### 3. Configure
 
 | Parameter | Description | Default |
 |---|---|---|
@@ -103,16 +115,34 @@ Export as `.csv` or `.xlsx`. One sheet, one row per sample.
 
 GFP is marked `informational_only`: its expression level is set by the biology of the cell, not by a titrable dose. It participates in invasion calculations — its spill can reach other channels, and other dyes can spill into its channel — but no concentration selection is performed for it.
 
-### 3. Run the analysis
+Configure the parent gate path under **Population base**, the instrument ceiling under **Detector max**, and the SI acceptance floor under **Minimum acceptable SI**. These three inputs define how the app interprets the FlowJo export and how aggressively it filters low-quality or near-saturated conditions.
 
-Click **Run analysis**. For each stained sample (dye × concentration × clone), the engine computes:
+<img src="Fig/Fig_2.png" alt="Step 2 - Configure Population base, Detector max, and Minimum acceptable SI" width="700"/>
+
+<br>
+
+**Step 3 — Map each dye to its target channel**
+
+In **Dye configuration**, confirm which detector channel belongs to each dye in the panel. By default, the app expects `GFP -> GFP-A`, `TMRM -> PE-A`, `Bodipy -> SNARF-A`, and `CellRox Deep Red -> APC-A`, but these assignments can be edited to match the export.
+
+<img src="Fig/Fig_3.png" alt="Step 3 - Configure target channels for each dye" width="700"/>
+
+<br>
+
+### 4. Run the analysis
+
+Click **Analizar**. For each stained sample (dye × concentration × clone), the engine computes:
 
 - Stain Index against the unstained control
 - Fraction of cells in the target channel's positive gate
 - Fraction of cells falling in each neighbor channel's positive gate (invasion)
 - Score, saturation envelope, and selection outcome
 
-### 4. Read the results
+<img src="Fig/Fig_4.png" alt="Step 4 - Run the analysis" width="700"/>
+
+<br>
+
+### 5. Read the results
 
 **Cards** at the top show the recommended concentration for each dye with a one-line interpretation.
 
